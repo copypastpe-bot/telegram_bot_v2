@@ -8,7 +8,8 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set in .env")
+    logging.error("BOT_TOKEN is not set. Create .env with BOT_TOKEN=<token> (see .env.example). Exiting.")
+    raise SystemExit(2)
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
@@ -20,6 +21,14 @@ async def start(msg: Message):
 @dp.message(F.text == "/ping")
 async def ping(msg: Message):
     await msg.answer("pong")
+
+@dp.message(F.text == "/id")
+async def whoami(msg: Message):
+    await msg.answer(f"Твой Telegram ID: {msg.from_user.id}")
+
+@dp.message(F.text == "/help")
+async def help(msg: Message):
+    await msg.answer("Список команд:\n/start - начать работу\n/ping - проверить бота\n/id - узнать свой Telegram ID\n/help - список команд")
 
 async def main():
     logging.info("Starting polling…")
