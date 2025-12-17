@@ -47,6 +47,7 @@ BTN_CANCEL = "Отмена"
 class ClientRequestFSM(StatesGroup):
     waiting_question = State()
     waiting_order = State()
+    waiting_phone_manual = State()
 
 
 def needs_phone(client: Optional[asyncpg.Record]) -> bool:
@@ -175,7 +176,7 @@ async def ensure_client(user: User) -> Tuple[asyncpg.Record, bool, bool]:
                 newly_started = True
                 client = await conn.fetchrow(
                     """
-                    INSERT INTO clients(name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
+                    INSERT INTO clients(full_name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
                     VALUES ($1, NULL, 'active', $2, true, now(), 'bot')
                     RETURNING *
                     """,
@@ -243,7 +244,7 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
             if target_id is None:
                 client = await conn.fetchrow(
                     """
-                    INSERT INTO clients(name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
+                    INSERT INTO clients(full_name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
                     VALUES ($1, $2, 'active', $3, true, now(), 'bot')
                     RETURNING *
                     """,
@@ -311,7 +312,8 @@ async def start_handler(message: Message, state: FSMContext) -> None:
         base_text.append("Бонус за подписку уже начислялся ранее.")
 
     if needs_phone(client):
-        base_text.append("Чтобы подтвердить профиль, поделитесь номером через кнопку ниже.")
+        base_text.append("⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.")
+        base_text.append("Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).")
     else:
         base_text.append("Можно посмотреть бонусы или отправить запрос администратору.")
 
@@ -405,9 +407,11 @@ async def bonuses_handler(message: Message) -> None:
 
 
 @dp.message(F.text.casefold() == BTN_SHARE_CONTACT.lower())
-async def share_contact_prompt(message: Message) -> None:
+async def share_contact_prompt(message: Message, state: FSMContext) -> None:
+    await state.set_state(ClientRequestFSM.waiting_phone_manual)
     await message.answer(
-        "Нажмите кнопку ниже, чтобы отправить номер.",
+        "Нажмите кнопку ниже, чтобы отправить номер автоматически.\n\n"
+        "Или введите номер вручную в формате: <b>9XXXXXXXXX</b> (10 цифр, начинается с 9)",
         reply_markup=contact_keyboard(),
     )
 
@@ -415,6 +419,13 @@ async def share_contact_prompt(message: Message) -> None:
 @dp.message(F.text.casefold() == BTN_QUESTION.lower())
 async def ask_question(message: Message, state: FSMContext) -> None:
     if not message.from_user:
+        return
+    client = await get_client_by_tg(message.from_user.id)
+    if needs_phone(client):
+        await message.answer(
+            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
+            reply_markup=contact_keyboard(),
+        )
         return
     await state.set_state(ClientRequestFSM.waiting_question)
     await message.answer(
@@ -426,6 +437,13 @@ async def ask_question(message: Message, state: FSMContext) -> None:
 @dp.message(F.text.casefold() == BTN_ORDER.lower())
 async def make_order(message: Message, state: FSMContext) -> None:
     if not message.from_user:
+        return
+    client = await get_client_by_tg(message.from_user.id)
+    if needs_phone(client):
+        await message.answer(
+            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
+            reply_markup=contact_keyboard(),
+        )
         return
     await state.set_state(ClientRequestFSM.waiting_order)
     await message.answer(
@@ -447,6 +465,32 @@ async def cancel_handler(message: Message, state: FSMContext) -> None:
     )
 
 
+@dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual))
+async def handle_manual_phone(message: Message, state: FSMContext) -> None:
+    """Обработка ручного ввода номера телефона."""
+    if not message.from_user:
+        return
+    
+    phone_text = message.text.strip()
+    # Проверяем формат: 9XXXXXXXXX (10 цифр, начинается с 9)
+    if re.match(r'^9\d{9}$', phone_text):
+        # Нормализуем номер
+        normalized = normalize_phone(phone_text)
+        user = message.from_user
+        client = await upsert_contact(user, normalized, user.full_name)
+        await state.clear()
+        await message.answer(
+            f"✅ Номер {normalized} сохранён! Теперь можете пользоваться всеми функциями бота.",
+            reply_markup=main_menu(require_contact=needs_phone(client)),
+        )
+    else:
+        await message.answer(
+            "❌ Неверный формат номера. Введите номер в формате: <b>9XXXXXXXXX</b> (10 цифр, начинается с 9)\n\n"
+            "Или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
+            reply_markup=contact_keyboard(),
+        )
+
+
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     if await state.get_state():
@@ -455,6 +499,12 @@ async def fallback(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    if needs_phone(client):
+        await message.answer(
+            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
+            reply_markup=contact_keyboard(),
+        )
+        return
     await message.answer(
         "Выберите действие через меню: бонусы, заказ или вопрос.",
         reply_markup=main_menu(require_contact=needs_phone(client)),
