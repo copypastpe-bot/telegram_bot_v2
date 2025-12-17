@@ -464,6 +464,7 @@ async def fallback(message: Message, state: FSMContext) -> None:
 async def main() -> None:
     await init_pool(min_size=1, max_size=5)
     try:
+        await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     finally:
         await close_pool()
