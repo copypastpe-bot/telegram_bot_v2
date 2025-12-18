@@ -221,7 +221,7 @@ async def ensure_client(user: User) -> Tuple[asyncpg.Record, bool, bool]:
                 client = await conn.fetchrow(
                     f"""
                     INSERT INTO clients({name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
-                    VALUES ($1, NULL, 'active', $2, true, now(), 'bot')
+                    VALUES ($1, NULL, 'client', $2, true, now(), 'bot')
                     RETURNING *
                     """,
                     user.full_name or user.username or "Без имени",
@@ -290,7 +290,7 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
                 client = await conn.fetchrow(
                     f"""
                     INSERT INTO clients({name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
-                    VALUES ($1, $2, 'active', $3, true, now(), 'bot')
+                    VALUES ($1, $2, 'client', $3, true, now(), 'bot')
                     RETURNING *
                     """,
                     name or user.full_name or user.username or "Без имени",
