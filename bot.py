@@ -96,7 +96,7 @@ async def log_signup(client: asyncpg.Record, user: User, bonus_awarded: bool, ne
     text = (
         "🆕 Новый подписчик клиентского бота\n"
         f"ID клиента: {client['id']}\n"
-        f"Имя: {client.get('name') or user.full_name}\n"
+        f"Имя: {client.get('full_name') or client.get('name') or user.full_name}\n"
         f"Телефон: {phone}\n"
         f"Telegram: {username}\n"
         f"TG ID: {user.id}\n"
@@ -119,6 +119,49 @@ def normalize_phone(raw: str) -> str:
     if raw.startswith("+"):
         return raw.strip()
     return raw.strip()
+
+
+_CLIENTS_NAME_COLUMN: str | None = None
+
+
+async def _clients_name_column(conn: asyncpg.Connection) -> str:
+    """
+    Detect whether `clients` table stores name in `full_name` or `name`.
+    Supports both schemas (older migrations: `name`, newer/production: `full_name`).
+    """
+    global _CLIENTS_NAME_COLUMN
+    if _CLIENTS_NAME_COLUMN:
+        return _CLIENTS_NAME_COLUMN
+
+    has_full_name = await conn.fetchval(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'clients'
+          AND column_name = 'full_name'
+        LIMIT 1
+        """
+    )
+    if has_full_name:
+        _CLIENTS_NAME_COLUMN = "full_name"
+        return _CLIENTS_NAME_COLUMN
+
+    has_name = await conn.fetchval(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'clients'
+          AND column_name = 'name'
+        LIMIT 1
+        """
+    )
+    if has_name:
+        _CLIENTS_NAME_COLUMN = "name"
+        return _CLIENTS_NAME_COLUMN
+
+    raise RuntimeError("clients table has neither 'name' nor 'full_name' column")
 
 
 async def merge_clients(conn: asyncpg.Connection, keep_id: int, drop_id: int) -> None:
@@ -174,9 +217,10 @@ async def ensure_client(user: User) -> Tuple[asyncpg.Record, bool, bool]:
                     )
             else:
                 newly_started = True
+                name_col = await _clients_name_column(conn)
                 client = await conn.fetchrow(
-                    """
-                    INSERT INTO clients(full_name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
+                    f"""
+                    INSERT INTO clients({name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
                     VALUES ($1, NULL, 'active', $2, true, now(), 'bot')
                     RETURNING *
                     """,
@@ -242,9 +286,10 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
                 target_id = client_by_tg["id"]
 
             if target_id is None:
+                name_col = await _clients_name_column(conn)
                 client = await conn.fetchrow(
-                    """
-                    INSERT INTO clients(full_name, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
+                    f"""
+                    INSERT INTO clients({name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact)
                     VALUES ($1, $2, 'active', $3, true, now(), 'bot')
                     RETURNING *
                     """,
@@ -466,15 +511,23 @@ async def cancel_handler(message: Message, state: FSMContext) -> None:
 
 
 @dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual))
+@dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual), F.text)
 async def handle_manual_phone(message: Message, state: FSMContext) -> None:
-    """Обработка ручного ввода номера телефона."""
+    """Обработка ручного ввода номера телефона (только текстовые сообщения)."""
     if not message.from_user:
         return
-    
-    phone_text = message.text.strip()
+
+    phone_text = (message.text or "").strip()
+    if not phone_text:
+        await message.answer(
+            "Пожалуйста, отправьте номер <b>текстом</b> в формате <b>9XXXXXXXXX</b> "
+            "или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
+            reply_markup=contact_keyboard(),
+        )
+        return
+
     # Проверяем формат: 9XXXXXXXXX (10 цифр, начинается с 9)
-    if re.match(r'^9\d{9}$', phone_text):
-        # Нормализуем номер
+    if re.match(r"^9\d{9}$", phone_text):
         normalized = normalize_phone(phone_text)
         user = message.from_user
         client = await upsert_contact(user, normalized, user.full_name)
@@ -483,12 +536,28 @@ async def handle_manual_phone(message: Message, state: FSMContext) -> None:
             f"✅ Номер {normalized} сохранён! Теперь можете пользоваться всеми функциями бота.",
             reply_markup=main_menu(require_contact=needs_phone(client)),
         )
-    else:
-        await message.answer(
-            "❌ Неверный формат номера. Введите номер в формате: <b>9XXXXXXXXX</b> (10 цифр, начинается с 9)\n\n"
-            "Или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
-            reply_markup=contact_keyboard(),
-        )
+        return
+
+    await message.answer(
+        "❌ Неверный формат номера. Введите номер в формате: <b>9XXXXXXXXX</b> (10 цифр, начинается с 9)\n\n"
+        "Или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
+        reply_markup=contact_keyboard(),
+    )
+
+
+@dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual))
+async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> None:
+    """Защита от не-текстовых сообщений в режиме ручного ввода номера."""
+    if not message.from_user:
+        return
+    # Контакт обработает отдельный хэндлер F.contact
+    if message.contact:
+        return
+    await message.answer(
+        "Пожалуйста, отправьте номер <b>текстом</b> в формате <b>9XXXXXXXXX</b> "
+        "или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
+        reply_markup=contact_keyboard(),
+    )
 
 
 @dp.message()
