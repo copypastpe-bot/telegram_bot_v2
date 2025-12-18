@@ -368,15 +368,6 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
                     phone,
                     user.id,
                 )
-                if "phone_digits" in cols and phone_digits:
-                    try:
-                        client = await conn.fetchrow(
-                            "UPDATE clients SET phone_digits=$1 WHERE id=$2 RETURNING *",
-                            phone_digits,
-                            client["id"],
-                        )
-                    except Exception:
-                        pass
             else:
                 # Build update dynamically to support optional columns like phone_digits/last_updated/tg_*
                 updates: list[str] = [
@@ -389,10 +380,6 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
                 ]
                 params: list[object] = [target_id, phone, user.id]
                 param_idx = 4
-                if "phone_digits" in cols and phone_digits:
-                    updates.append(f"phone_digits = ${param_idx}")
-                    params.append(phone_digits)
-                    param_idx += 1
                 if "last_updated" in cols:
                     updates.append("last_updated = NOW()")
                 sql = "UPDATE clients SET " + ", ".join(updates) + " WHERE id=$1 RETURNING *"
