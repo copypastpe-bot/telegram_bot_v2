@@ -122,6 +122,27 @@ def normalize_phone(raw: str) -> str:
 
 
 _CLIENTS_NAME_COLUMN: str | None = None
+_CLIENTS_COLUMNS: set[str] | None = None
+
+
+async def _clients_columns(conn: asyncpg.Connection) -> set[str]:
+    global _CLIENTS_COLUMNS
+    if _CLIENTS_COLUMNS is not None:
+        return _CLIENTS_COLUMNS
+    rows = await conn.fetch(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'clients'
+        """
+    )
+    _CLIENTS_COLUMNS = {str(r["column_name"]) for r in rows if r and r.get("column_name")}
+    return _CLIENTS_COLUMNS
+
+
+async def _clients_has_column(conn: asyncpg.Connection, column_name: str) -> bool:
+    return column_name in await _clients_columns(conn)
 
 
 async def _clients_name_column(conn: asyncpg.Connection) -> str:
@@ -132,36 +153,69 @@ async def _clients_name_column(conn: asyncpg.Connection) -> str:
     global _CLIENTS_NAME_COLUMN
     if _CLIENTS_NAME_COLUMN:
         return _CLIENTS_NAME_COLUMN
-
-    has_full_name = await conn.fetchval(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'clients'
-          AND column_name = 'full_name'
-        LIMIT 1
-        """
-    )
-    if has_full_name:
+    if await _clients_has_column(conn, "full_name"):
         _CLIENTS_NAME_COLUMN = "full_name"
         return _CLIENTS_NAME_COLUMN
-
-    has_name = await conn.fetchval(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'clients'
-          AND column_name = 'name'
-        LIMIT 1
-        """
-    )
-    if has_name:
+    if await _clients_has_column(conn, "name"):
         _CLIENTS_NAME_COLUMN = "name"
         return _CLIENTS_NAME_COLUMN
 
     raise RuntimeError("clients table has neither 'name' nor 'full_name' column")
+
+
+def normalize_phone_digits(raw: str) -> str:
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    if len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    return digits
+
+
+async def _update_client_tg_fields(conn: asyncpg.Connection, client_id: int, user: User) -> asyncpg.Record:
+    """
+    Best-effort update of telegram identity fields on clients table, if those columns exist.
+    Returns updated client row.
+    """
+    cols = await _clients_columns(conn)
+    updates: list[str] = []
+    params: list[object] = [client_id]
+    idx = 2
+
+    def add(col: str, val: object) -> None:
+        nonlocal idx
+        updates.append(f"{col} = ${idx}")
+        params.append(val)
+        idx += 1
+
+    if "status" in cols:
+        add("status", "client")
+    if "tg_id" in cols:
+        add("tg_id", user.id)
+    if "tg_username" in cols:
+        add("tg_username", user.username)
+    if "tg_first_name" in cols:
+        add("tg_first_name", user.first_name)
+    if "tg_last_name" in cols:
+        add("tg_last_name", user.last_name)
+    if "tg_language_code" in cols:
+        add("tg_language_code", user.language_code)
+    if "tg_is_premium" in cols:
+        add("tg_is_premium", bool(getattr(user, "is_premium", False)))
+    if "last_updated" in cols:
+        updates.append("last_updated = NOW()")
+
+    if not updates:
+        row = await conn.fetchrow("SELECT * FROM clients WHERE id=$1", client_id)
+        if not row:
+            raise RuntimeError("Client row not found after update")
+        return row
+
+    sql = "UPDATE clients SET " + ", ".join(updates) + f" WHERE id = $1 RETURNING *"
+    row = await conn.fetchrow(sql, *params)
+    if not row:
+        raise RuntimeError("Client row not found after update")
+    return row
 
 
 async def merge_clients(conn: asyncpg.Connection, keep_id: int, drop_id: int) -> None:
@@ -197,6 +251,11 @@ async def ensure_client(user: User) -> Tuple[asyncpg.Record, bool, bool]:
             )
             newly_started = False
             if client:
+                # best-effort enrich TG identity fields (if columns exist)
+                try:
+                    client = await _update_client_tg_fields(conn, int(client["id"]), user)
+                except Exception:
+                    pass
                 if not client["bot_started"]:
                     newly_started = True
                     client = await conn.fetchrow(
@@ -227,6 +286,10 @@ async def ensure_client(user: User) -> Tuple[asyncpg.Record, bool, bool]:
                     user.full_name or user.username or "Без имени",
                     user.id,
                 )
+                try:
+                    client = await _update_client_tg_fields(conn, int(client["id"]), user)
+                except Exception:
+                    pass
 
             bonus_awarded = False
             if client and not client["bot_bonus_granted"]:
@@ -264,17 +327,25 @@ async def get_client_by_tg(user_id: int) -> Optional[asyncpg.Record]:
 
 async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asyncpg.Record:
     phone = normalize_phone(phone_raw)
+    phone_digits = normalize_phone_digits(phone)
     pool = get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
+            cols = await _clients_columns(conn)
             client_by_tg = await conn.fetchrow(
                 "SELECT * FROM clients WHERE bot_tg_user_id=$1",
                 user.id,
             )
-            client_by_phone = await conn.fetchrow(
-                "SELECT * FROM clients WHERE phone=$1",
-                phone,
-            )
+            if "phone_digits" in cols and phone_digits:
+                client_by_phone = await conn.fetchrow(
+                    "SELECT * FROM clients WHERE phone_digits=$1",
+                    phone_digits,
+                )
+            else:
+                client_by_phone = await conn.fetchrow(
+                    "SELECT * FROM clients WHERE phone=$1",
+                    phone,
+                )
 
             target_id: Optional[int] = None
             if client_by_tg and client_by_phone and client_by_tg["id"] != client_by_phone["id"]:
@@ -297,22 +368,40 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> asy
                     phone,
                     user.id,
                 )
+                if "phone_digits" in cols and phone_digits:
+                    try:
+                        client = await conn.fetchrow(
+                            "UPDATE clients SET phone_digits=$1 WHERE id=$2 RETURNING *",
+                            phone_digits,
+                            client["id"],
+                        )
+                    except Exception:
+                        pass
             else:
-                client = await conn.fetchrow(
-                    """
-                    UPDATE clients
-                    SET phone = COALESCE($2, phone),
-                        bot_tg_user_id = COALESCE(bot_tg_user_id, $3),
-                        bot_started = true,
-                        bot_started_at = COALESCE(bot_started_at, now()),
-                        preferred_contact = 'bot'
-                    WHERE id=$1
-                    RETURNING *
-                    """,
-                    target_id,
-                    phone,
-                    user.id,
-                )
+                # Build update dynamically to support optional columns like phone_digits/last_updated/tg_*
+                updates: list[str] = [
+                    "phone = COALESCE($2, phone)",
+                    "bot_tg_user_id = COALESCE(bot_tg_user_id, $3)",
+                    "bot_started = true",
+                    "bot_started_at = COALESCE(bot_started_at, now())",
+                    "preferred_contact = 'bot'",
+                    "status = 'client'",
+                ]
+                params: list[object] = [target_id, phone, user.id]
+                param_idx = 4
+                if "phone_digits" in cols and phone_digits:
+                    updates.append(f"phone_digits = ${param_idx}")
+                    params.append(phone_digits)
+                    param_idx += 1
+                if "last_updated" in cols:
+                    updates.append("last_updated = NOW()")
+                sql = "UPDATE clients SET " + ", ".join(updates) + " WHERE id=$1 RETURNING *"
+                client = await conn.fetchrow(sql, *params)
+                if client:
+                    try:
+                        client = await _update_client_tg_fields(conn, int(client["id"]), user)
+                    except Exception:
+                        pass
             return client
 
 
@@ -380,7 +469,13 @@ async def contact_handler(message: Message, state: FSMContext) -> None:
             reply_markup=contact_keyboard(),
         )
         return
-    client = await upsert_contact(user, contact.phone_number, contact.full_name)
+    # aiogram Contact has no `full_name`; use user.full_name or contact's first/last name
+    contact_name = None
+    first = getattr(contact, "first_name", None)
+    last = getattr(contact, "last_name", None)
+    if first or last:
+        contact_name = " ".join([p for p in [first, last] if p])
+    client = await upsert_contact(user, contact.phone_number, contact_name or user.full_name)
     await state.clear()
     await message.answer(
         "Спасибо! Номер сохранён. Теперь можете пользоваться меню.",
@@ -465,13 +560,7 @@ async def share_contact_prompt(message: Message, state: FSMContext) -> None:
 async def ask_question(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
-    client = await get_client_by_tg(message.from_user.id)
-    if needs_phone(client):
-        await message.answer(
-            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
-            reply_markup=contact_keyboard(),
-        )
-        return
+    # Вопрос можно задавать даже без номера (по требованиям)
     await state.set_state(ClientRequestFSM.waiting_question)
     await message.answer(
         "Опишите ваш вопрос. Чтобы отменить, напишите «Отмена».",
@@ -567,12 +656,6 @@ async def fallback(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
-    if needs_phone(client):
-        await message.answer(
-            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
-            reply_markup=contact_keyboard(),
-        )
-        return
     await message.answer(
         "Выберите действие через меню: бонусы, заказ или вопрос.",
         reply_markup=main_menu(require_contact=needs_phone(client)),
