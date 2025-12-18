@@ -510,7 +510,6 @@ async def cancel_handler(message: Message, state: FSMContext) -> None:
     )
 
 
-@dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual))
 @dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual), F.text)
 async def handle_manual_phone(message: Message, state: FSMContext) -> None:
     """Обработка ручного ввода номера телефона (только текстовые сообщения)."""
