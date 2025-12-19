@@ -12,6 +12,8 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -42,6 +44,8 @@ BTN_ORDER = "Сделать заказ"
 BTN_QUESTION = "Задать вопрос"
 BTN_SHARE_CONTACT = "📱 Поделиться номером"
 BTN_CANCEL = "Отмена"
+BTN_PRICE = "💰 Прайс"
+BTN_SCHEDULE = "🕐 Режим работы"
 
 
 class ClientRequestFSM(StatesGroup):
@@ -60,6 +64,7 @@ def main_menu(require_contact: bool) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text=BTN_SHARE_CONTACT, request_contact=True)])
     rows.append([KeyboardButton(text=BTN_BONUS)])
     rows.append([KeyboardButton(text=BTN_ORDER), KeyboardButton(text=BTN_QUESTION)])
+    rows.append([KeyboardButton(text=BTN_PRICE), KeyboardButton(text=BTN_SCHEDULE)])
     rows.append([KeyboardButton(text=BTN_CANCEL)])
     return ReplyKeyboardMarkup(
         keyboard=rows,
@@ -571,6 +576,34 @@ async def make_order(message: Message, state: FSMContext) -> None:
         "Расскажите, какая услуга нужна. Пока просто передаю текст администратору.",
         reply_markup=ReplyKeyboardRemove(),
     )
+
+
+@dp.message(F.text.casefold() == BTN_PRICE.lower())
+async def price_handler(message: Message) -> None:
+    """Обработчик кнопки 'Прайс' - показывает ссылку на прайс на сайте"""
+    text = "💰 <b>Прайс на услуги</b>\n\nПосмотрите актуальные цены на нашем сайте:"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Открыть прайс", url="https://raketaclean.ru/price")]
+        ]
+    )
+    await message.answer(text, reply_markup=keyboard)
+
+
+@dp.message(F.text.casefold() == BTN_SCHEDULE.lower())
+async def schedule_handler(message: Message) -> None:
+    """Обработчик кнопки 'Режим работы' - показывает контактную информацию"""
+    text = (
+        "<b>RAKETACLEAN клининговая компания</b>\n\n"
+        "Телефон:\n"
+        "+79040437523\n"
+        "ежедневно с 9:00 до 19:00\n\n"
+        "Сайт: raketaclean.ru\n\n"
+        "Эл.почта:\n"
+        "raketa@raketaclean.ru\n\n"
+        "Адрес: Нижний Новгород, ул. Артельная 37 (офис)"
+    )
+    await message.answer(text)
 
 
 @dp.message(Command("cancel"))
