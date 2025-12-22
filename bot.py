@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.middleware import BaseMiddleware
+from aiogram import BaseMiddleware
 from aiogram.types import (
     ChatMemberUpdated,
     InlineKeyboardButton,
@@ -1043,6 +1043,10 @@ async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> No
 @dp.message(F.text)
 async def handle_rewash_response(message: Message, state: FSMContext) -> None:
     """Обработка ответов на перемыв (1, 'спасибо', 2)."""
+    # Сначала проверяем, не является ли это кнопкой меню или командой
+    if is_menu_button(message.text):
+        return  # Передаем обработку другим handlers
+    
     if await state.get_state():
         # Если пользователь в процессе другого действия, не обрабатываем
         return
@@ -1144,7 +1148,7 @@ async def handle_rewash_response(message: Message, state: FSMContext) -> None:
             
             await message.answer(
                 "Спасибо за обратную связь! Мы обязательно разберемся с проблемой и свяжемся с вами."
-    )
+            )
 
 
 @dp.message()
