@@ -8,11 +8,12 @@ from typing import Optional, Tuple
 import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -742,6 +743,53 @@ async def schedule_handler(message: Message) -> None:
         "Адрес: Нижний Новгород, ул. Артельная 37 (офис)"
     )
     await message.answer(text)
+
+
+@dp.my_chat_member()
+async def chat_member_updates(event: ChatMemberUpdated) -> None:
+    if event.chat.type != ChatType.PRIVATE:
+        return
+    user = event.new_chat_member.user
+    if not user:
+        return
+    status = event.new_chat_member.status
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        client = await _fetch_client_by_tg(conn, user.id)
+        if not client:
+            return
+        cols = await _clients_columns(conn)
+        updates: list[str] = []
+        literals: list[str] = []
+        params: list[object] = [client["id"]]
+        idx = 2
+
+        def add(col: str, value: object) -> None:
+            nonlocal idx
+            updates.append(f"{col} = ${idx}")
+            params.append(value)
+            idx += 1
+
+        if status in {ChatMemberStatus.KICKED, ChatMemberStatus.LEFT}:
+            if "bot_started" in cols:
+                add("bot_started", False)
+            if "preferred_contact" in cols:
+                add("preferred_contact", "wahelp")
+        elif status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}:
+            if "bot_started" in cols:
+                add("bot_started", True)
+            if "preferred_contact" in cols:
+                add("preferred_contact", "bot")
+            if "bot_started_at" in cols:
+                literals.append("bot_started_at = COALESCE(bot_started_at, NOW())")
+        else:
+            return
+
+        if not updates and not literals:
+            return
+        set_clause_parts = updates + literals
+        set_clause = ", ".join(set_clause_parts)
+        await conn.execute(f"UPDATE clients SET {set_clause} WHERE id=$1", *params)
 
 
 @dp.message(Command("cancel"))
