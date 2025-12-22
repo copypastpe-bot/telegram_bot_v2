@@ -9,9 +9,11 @@ import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.middleware import BaseMiddleware
 from aiogram.types import (
     ChatMemberUpdated,
     InlineKeyboardButton,
@@ -20,6 +22,7 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    TelegramObject,
     User,
 )
 from dotenv import load_dotenv
@@ -48,6 +51,17 @@ BTN_SHARE_CONTACT = "📱 Поделиться номером"
 BTN_CANCEL = "Отмена"
 BTN_PRICE = "💰 Прайс"
 BTN_SCHEDULE = "🕐 Режим работы"
+
+# Список всех кнопок меню для проверки
+MENU_BUTTONS = [
+    BTN_BONUS,
+    BTN_ORDER,
+    BTN_QUESTION,
+    BTN_SHARE_CONTACT,
+    BTN_CANCEL,
+    BTN_PRICE,
+    BTN_SCHEDULE,
+]
 
 
 class ClientRequestFSM(StatesGroup):
@@ -90,6 +104,29 @@ def contact_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="Нажмите, чтобы поделиться номером",
     )
+
+
+async def safe_send_message(chat_id: int, text: str, **kwargs) -> Optional[Message]:
+    """
+    Безопасная отправка сообщения с автоматической обработкой отписки.
+    Возвращает Message при успехе, None при ошибке (включая блокировку бота).
+    """
+    try:
+        return await bot.send_message(chat_id, text, **kwargs)
+    except TelegramBadRequest as e:
+        error_codes = {
+            "bot_blocked_by_user",
+            "user_is_deleted",
+            "chat_not_found",
+        }
+        if any(code in str(e).lower() for code in error_codes):
+            await mark_client_unsubscribed(chat_id)
+            logging.warning(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
+            return None
+        raise
+    except Exception as e:
+        logging.error(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+        return None
 
 
 async def notify_admins(text: str) -> None:
@@ -153,7 +190,7 @@ async def send_bonus_message(client: asyncpg.Record, user: User) -> None:
         "• Посмотреть бонусы",
     ])
     
-    await bot.send_message(user.id, "\n".join(lines), parse_mode=ParseMode.HTML)
+    await safe_send_message(user.id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def log_signup(client: asyncpg.Record, user: User, was_merged: bool = False) -> None:
@@ -422,21 +459,17 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
                     await conn.execute("DELETE FROM clients WHERE id=$1", client_by_tg["id"])
                 
                 # Обновляем клиента по телефону: добавляем недостающие поля (tg_id, username)
+                # НЕ меняем preferred_contact и wahelp_preferred_channel (оставляем как есть)
                 updates: list[str] = [
                     "bot_tg_user_id = COALESCE(bot_tg_user_id, $2)",
                     "bot_started = true",
                     "bot_started_at = COALESCE(bot_started_at, now())",
-                    "preferred_contact = 'bot'",
                     "status = 'client'",
                 ]
                 params: list[object] = [client_by_phone["id"], user.id]
                 
                 if "tg_user_id" in cols:
                     updates.append("tg_user_id = COALESCE(tg_user_id, $2)")
-                
-                # Устанавливаем приоритет каналов Wahelp: бот, если не получилось - вахелп
-                if "wahelp_preferred_channel" in cols:
-                    updates.append("wahelp_preferred_channel = 'clients_tg'")
                 
                 if "last_updated" in cols:
                     updates.append("last_updated = NOW()")
@@ -453,11 +486,11 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
                 # Клиент найден по tg_id, но нет по телефону
                 target_id = client_by_tg["id"]
                 # Обновляем клиента: добавляем телефон и обновляем поля
+                # НЕ меняем preferred_contact и wahelp_preferred_channel (оставляем как есть)
                 updates: list[str] = [
                     "phone = $2",
                     "bot_started = true",
                     "bot_started_at = COALESCE(bot_started_at, now())",
-                    "preferred_contact = 'bot'",
                     "status = 'client'",
                 ]
                 params: list[object] = [target_id, phone]
@@ -465,10 +498,6 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
                 if "tg_user_id" in cols:
                     updates.append("tg_user_id = COALESCE(tg_user_id, $3)")
                     params.append(user.id)
-                
-                # Устанавливаем приоритет каналов Wahelp
-                if "wahelp_preferred_channel" in cols:
-                    updates.append("wahelp_preferred_channel = 'clients_tg'")
                 
                 if "last_updated" in cols:
                     updates.append("last_updated = NOW()")
@@ -483,10 +512,11 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
 
             if target_id is None:
                 # Новый клиент - создаем запись
+                # НЕ устанавливаем preferred_contact (будет NULL или значение по умолчанию)
                 name_col = await _clients_name_column(conn)
                 has_tg_user_id = await _clients_has_column(conn, "tg_user_id")
-                columns = f"{name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at, preferred_contact"
-                values = "$1, $2, 'client', $3, true, now(), 'bot'"
+                columns = f"{name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at"
+                values = "$1, $2, 'client', $3, true, now()"
                 params: list[object] = [
                     name or user.full_name or user.username or "Без имени",
                     phone,
@@ -541,6 +571,82 @@ def format_admin_payload(kind: str, message: Message, client: Optional[asyncpg.R
     return "\n".join(lines)
 
 
+def is_menu_button(text: str) -> bool:
+    """Проверяет, является ли текст кнопкой меню."""
+    if not text:
+        return False
+    
+    text_normalized = text.strip()
+    
+    # Проверяем команды
+    if text_normalized.startswith("/"):
+        return True
+    
+    # Проверяем кнопки (убираем эмодзи для сравнения)
+    for button in MENU_BUTTONS:
+        # Убираем эмодзи и пробелы для сравнения
+        button_text = button.split(" ", 1)[-1] if " " in button else button
+        if text_normalized.lower() == button.lower() or text_normalized.lower() == button_text.lower():
+            return True
+    
+    return False
+
+
+async def create_lead_and_notify_admin(message: Message) -> None:
+    """Создает лид в БД и отправляет уведомление админам."""
+    if not message.from_user:
+        return
+    
+    user = message.from_user
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        # Проверяем структуру таблицы leads
+        cols = await conn.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'leads'
+            """
+        )
+        has_tg_user_id = any(col["column_name"] == "tg_user_id" for col in cols)
+        
+        # Проверяем, есть ли уже лид с таким tg_user_id (если колонка есть)
+        existing_lead = None
+        if has_tg_user_id:
+            existing_lead = await conn.fetchrow(
+                """
+                SELECT id FROM leads
+                WHERE tg_user_id = $1
+                LIMIT 1
+                """,
+                user.id
+            )
+        
+        if not existing_lead:
+            # Создаем новый лид
+            if has_tg_user_id:
+                await conn.execute(
+                    """
+                    INSERT INTO leads(name, phone, source, status, tg_user_id)
+                    VALUES ($1, NULL, 'telegram_bot', 'new', $2)
+                    """,
+                    user.full_name or user.username or "Без имени",
+                    user.id
+                )
+            else:
+                await conn.execute(
+                    """
+                    INSERT INTO leads(name, phone, source, status)
+                    VALUES ($1, NULL, 'telegram_bot', 'new')
+                    """,
+                    user.full_name or user.username or "Без имени"
+                )
+        
+        # Отправляем админам
+        payload = format_admin_payload("Вопрос от лида (без телефона)", message, None)
+        await notify_admins(payload)
+
+
 async def send_menu(message: Message, client: Optional[asyncpg.Record]) -> None:
     await message.answer(
         "Главное меню RaketaClean",
@@ -553,24 +659,16 @@ async def start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     if not message.from_user:
         return
-    client = await get_client_by_tg(message.from_user.id)
-    phone_required = needs_phone(client)
-    if phone_required:
-        base_text = [
-            "Привет! 👋",
-            "Этот бот будет присылать бонусы, акции и напоминания от RaketaClean.",
-            "",
-            "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.",
-            "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
-        ]
-    else:
-        base_text = [
-            "Привет! 👋",
-            "Вы уже подключены — используйте кнопки ниже, чтобы посмотреть бонусы или оставить заявку.",
-        ]
+    
+    # Всегда показываем одно сообщение с запросом телефона
+    # НЕ ищем клиента в БД, НЕ помечаем как подписавшегося
     await message.answer(
-        "\n\n".join(base_text),
-        reply_markup=main_menu(require_contact=phone_required),
+        "Привет! 👋\n\n"
+        "Этот бот будет присылать бонусы, акции и напоминания от RaketaClean.\n\n"
+        "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.\n"
+        "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
+        reply_markup=main_menu(require_contact=True),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -733,9 +831,11 @@ async def price_handler(message: Message) -> None:
 async def schedule_handler(message: Message) -> None:
     """Обработчик кнопки 'Режим работы' - показывает контактную информацию"""
     text = (
-        "<b>RAKETACLEAN клининговая компания</b>\n\n"
-        "Телефон:\n"
-        "+79040437523\n"
+        "🕐 <b>Режим работы:</b>\n\n"
+        "Пн-Вс: 9:00 - 21:00\n\n"
+        "<b>Для связи:</b>\n"
+        "Telegram: @raketaclean\n"
+        "Телефон: +79040437523\n"
         "ежедневно с 9:00 до 19:00\n\n"
         "Сайт: raketaclean.ru\n\n"
         "Эл.почта:\n"
@@ -745,17 +845,41 @@ async def schedule_handler(message: Message) -> None:
     await message.answer(text)
 
 
-@dp.my_chat_member()
-async def chat_member_updates(event: ChatMemberUpdated) -> None:
-    if event.chat.type != ChatType.PRIVATE:
-        return
-    user = event.new_chat_member.user
-    if not user:
-        return
-    status = event.new_chat_member.status
+async def mark_client_unsubscribed(user_id: int) -> None:
+    """Помечает клиента как отписавшегося от бота."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        client = await _fetch_client_by_tg(conn, user.id)
+        client = await _fetch_client_by_tg(conn, user_id)
+        if not client:
+            return
+        cols = await _clients_columns(conn)
+        updates: list[str] = []
+        params: list[object] = [client["id"]]
+        idx = 2
+
+        def add(col: str, value: object) -> None:
+            nonlocal idx
+            updates.append(f"{col} = ${idx}")
+            params.append(value)
+            idx += 1
+
+        if "bot_started" in cols:
+            add("bot_started", False)
+        if "preferred_contact" in cols:
+            add("preferred_contact", "wahelp")
+
+        if not updates:
+            return
+        set_clause = ", ".join(updates)
+        await conn.execute(f"UPDATE clients SET {set_clause} WHERE id=$1", *params)
+        logging.info(f"Клиент {client['id']} (TG: {user_id}) помечен как отписавшийся")
+
+
+async def mark_client_subscribed(user_id: int) -> None:
+    """Помечает клиента как подписавшегося на бота."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        client = await _fetch_client_by_tg(conn, user_id)
         if not client:
             return
         cols = await _clients_columns(conn)
@@ -770,26 +894,81 @@ async def chat_member_updates(event: ChatMemberUpdated) -> None:
             params.append(value)
             idx += 1
 
-        if status in {ChatMemberStatus.KICKED, ChatMemberStatus.LEFT}:
-            if "bot_started" in cols:
-                add("bot_started", False)
-            if "preferred_contact" in cols:
-                add("preferred_contact", "wahelp")
-        elif status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}:
-            if "bot_started" in cols:
-                add("bot_started", True)
-            if "preferred_contact" in cols:
-                add("preferred_contact", "bot")
-            if "bot_started_at" in cols:
-                literals.append("bot_started_at = COALESCE(bot_started_at, NOW())")
-        else:
-            return
+        if "bot_started" in cols:
+            add("bot_started", True)
+        if "preferred_contact" in cols:
+            add("preferred_contact", "bot")
+        if "bot_started_at" in cols:
+            literals.append("bot_started_at = COALESCE(bot_started_at, NOW())")
 
         if not updates and not literals:
             return
         set_clause_parts = updates + literals
         set_clause = ", ".join(set_clause_parts)
         await conn.execute(f"UPDATE clients SET {set_clause} WHERE id=$1", *params)
+        logging.info(f"Клиент {client['id']} (TG: {user_id}) помечен как подписавшийся")
+
+
+class UnsubscribeMiddleware(BaseMiddleware):
+    """Middleware для обработки отписки пользователей при ошибках отправки сообщений."""
+    
+    async def __call__(
+        self,
+        handler,
+        event: TelegramObject,
+        data: dict,
+    ):
+        try:
+            return await handler(event, data)
+        except TelegramBadRequest as e:
+            # Обрабатываем ошибки, связанные с блокировкой бота
+            error_message = str(e).lower()
+            error_codes = [
+                "bot_blocked_by_user",
+                "user_is_deleted", 
+                "chat_not_found",
+                "user not found",
+            ]
+            
+            if any(code in error_message for code in error_codes):
+                # Пытаемся получить user_id из события
+                user_id = None
+                if isinstance(event, Message):
+                    if event.from_user:
+                        user_id = event.from_user.id
+                    elif event.chat and event.chat.type == ChatType.PRIVATE:
+                        user_id = event.chat.id
+                elif isinstance(event, ChatMemberUpdated):
+                    if event.from_user:
+                        user_id = event.from_user.id
+                    elif event.chat and event.chat.type == ChatType.PRIVATE:
+                        user_id = event.chat.id
+                
+                if user_id:
+                    await mark_client_unsubscribed(user_id)
+                    logging.warning(f"Пользователь {user_id} заблокировал бота или удалён: {e}")
+                else:
+                    logging.warning(f"Не удалось определить user_id для обработки отписки: {e}")
+            
+            # Пробрасываем ошибку дальше, если это не связано с блокировкой
+            if not any(code in error_message for code in error_codes):
+                raise
+
+
+@dp.my_chat_member()
+async def chat_member_updates(event: ChatMemberUpdated) -> None:
+    """Обработка событий изменения статуса в группах/каналах."""
+    if event.chat.type != ChatType.PRIVATE:
+        return
+    user = event.new_chat_member.user
+    if not user:
+        return
+    status = event.new_chat_member.status
+    
+    if status in {ChatMemberStatus.KICKED, ChatMemberStatus.LEFT}:
+        await mark_client_unsubscribed(user.id)
+    elif status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}:
+        await mark_client_subscribed(user.id)
 
 
 @dp.message(Command("cancel"))
@@ -970,19 +1149,51 @@ async def handle_rewash_response(message: Message, state: FSMContext) -> None:
 
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
+    """Обработчик всех сообщений, которые не попали в другие handlers."""
     if await state.get_state():
         await message.answer("Пожалуйста, завершите текущий шаг или напишите «Отмена».")
         return
-    if not message.from_user:
+    
+    if not message.from_user or not message.text:
         return
+    
+    # Проверяем, является ли это кнопкой меню
+    if is_menu_button(message.text):
+        # Это кнопка меню, но не обработалась другим handler'ом
+        # Просто показываем меню
+        client = await get_client_by_tg(message.from_user.id)
+        await message.answer(
+            "Выберите действие через меню: бонусы, заказ или вопрос.",
+            reply_markup=main_menu(require_contact=needs_phone(client)),
+        )
+        return
+    
+    # Это произвольное текстовое сообщение
     client = await get_client_by_tg(message.from_user.id)
-    await message.answer(
-        "Выберите действие через меню: бонусы, заказ или вопрос.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
-    )
+    
+    if needs_phone(client):
+        # Клиент без телефона - создаем лид и отправляем админу
+        await create_lead_and_notify_admin(message)
+        await message.answer(
+            "Сообщение передано менеджеру. Мы свяжемся с вами в ближайшее время.\n\n"
+            "⚠️ Для полного доступа к функциям бота укажите номер телефона.",
+            reply_markup=main_menu(require_contact=True),
+        )
+    else:
+        # Клиент с телефоном - отправляем как вопрос админу
+        payload = format_admin_payload("Вопрос от клиента", message, client)
+        await notify_admins(payload)
+        await message.answer(
+            "Передал вопрос администратору. Ответим как можно скорее!",
+            reply_markup=main_menu(require_contact=False),
+        )
 
 
 async def main() -> None:
+    # Регистрируем middleware для обработки отписки
+    # В aiogram 3.x middleware регистрируется через update
+    dp.update.middleware(UnsubscribeMiddleware())
+    
     await init_pool(min_size=1, max_size=5)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
