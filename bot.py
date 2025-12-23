@@ -1236,7 +1236,7 @@ async def cleanup_expired_bonuses() -> None:
                 FROM clients c
                 JOIN bonus_transactions bt ON bt.client_id = c.id
                 WHERE bt.reason = 'bot_signup'
-                  AND DATE(bt.expires_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow') <= $1
+                  AND DATE(bt.expires_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow') = $1
                   AND NOT EXISTS (
                       SELECT 1 FROM orders WHERE client_id = c.id
                   )
