@@ -87,7 +87,7 @@ def main_menu(require_contact: bool) -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_ORDER), KeyboardButton(text=BTN_QUESTION)],
             [KeyboardButton(text=BTN_PRICE), KeyboardButton(text=BTN_SCHEDULE)],
         ]
-    rows.append([KeyboardButton(text=BTN_CANCEL)])
+    # Кнопку "Отмена" не показываем в главном меню - мы и так в главном меню
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
