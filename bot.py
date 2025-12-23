@@ -1076,11 +1076,11 @@ async def fallback(message: Message, state: FSMContext) -> None:
     if is_menu_button(message.text):
         # Это кнопка меню, но не обработалась другим handler'ом
         # Просто показываем меню
-    client = await get_client_by_tg(message.from_user.id)
-    await message.answer(
-        "Выберите действие через меню: бонусы, заказ или вопрос.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
-    )
+        client = await get_client_by_tg(message.from_user.id)
+        await message.answer(
+            "Выберите действие через меню: бонусы, заказ или вопрос.",
+            reply_markup=main_menu(require_contact=needs_phone(client)),
+        )
         return
     
     # Это произвольное текстовое сообщение
