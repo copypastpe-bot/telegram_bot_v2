@@ -229,13 +229,13 @@ async def send_bonus_message(client: asyncpg.Record, user: User) -> None:
     await safe_send_message(user.id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
-async def log_signup(client: asyncpg.Record, user: User, was_merged: bool = False) -> None:
+async def log_signup(client: asyncpg.Record, user: User, was_new: bool = False) -> None:
     """Логирует нового подписчика в чат после получения телефона."""
     if LOGS_CHAT_ID == 0:
         return
     username = f"@{user.username}" if user.username else "—"
     phone = client.get("phone") or "не указан"
-    merge_note = " (объединен с существующим клиентом)" if was_merged else ""
+    status_note = " (новый клиент)" if was_new else " (существующий клиент)"
     text = (
         "🆕 Новый подписчик клиентского бота\n"
         f"ID клиента: {client['id']}\n"
@@ -243,7 +243,7 @@ async def log_signup(client: asyncpg.Record, user: User, was_merged: bool = Fals
         f"Телефон: {phone}\n"
         f"Telegram: {username}\n"
         f"TG ID: {user.id}\n"
-        f"✅ бонус {ONBOARDING_BONUS} начислен{merge_note}"
+        f"✅ бонус {ONBOARDING_BONUS} начислен{status_note}"
     )
     try:
         await bot.send_message(LOGS_CHAT_ID, text)
@@ -416,11 +416,58 @@ async def get_client_by_tg(user_id: int) -> Optional[asyncpg.Record]:
         return await _fetch_client_by_tg(conn, user_id)
 
 
+async def _grant_signup_bonus_if_needed(conn: asyncpg.Connection, client_id: int) -> bool:
+    """
+    Универсальная функция для начисления бонусов за подписку.
+    Начисляет бонусы только если их еще не начисляли.
+    Возвращает True если бонусы были начислены, False если уже были.
+    """
+    # Проверяем, начислялись ли уже бонусы за подписку
+    existing_signup_bonus = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM bonus_transactions
+        WHERE client_id = $1 AND reason = 'bot_signup'
+        """,
+        client_id
+    )
+    
+    if existing_signup_bonus > 0:
+        return False  # Бонусы уже начислены
+    
+    # Начисляем бонусы
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    await conn.execute(
+        """
+        UPDATE clients
+        SET bonus_balance = bonus_balance + $1,
+            bot_bonus_granted = true
+        WHERE id = $2
+        """,
+        ONBOARDING_BONUS,
+        client_id,
+    )
+    await conn.execute(
+        """
+        INSERT INTO bonus_transactions(client_id, order_id, delta, reason, expires_at)
+        VALUES ($1, NULL, $2, 'bot_signup', $3)
+        """,
+        client_id,
+        ONBOARDING_BONUS,
+        expires_at,
+    )
+    return True  # Бонусы начислены
+
+
 async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tuple[asyncpg.Record, bool]:
     """
-    Обрабатывает получение телефона от пользователя.
-    Ищет клиента по телефону, объединяет записи если нужно, начисляет бонусы с сроком жизни.
-    Возвращает: (client, was_merged) - был ли клиент объединен с существующим по телефону
+    Универсальная функция обработки получения телефона от пользователя.
+    
+    Логика:
+    1. Ищем клиента ТОЛЬКО по номеру телефона в clients
+    2. Если нашли - обновляем tg_user_id (если не заполнено), начисляем бонусы (если еще не начисляли)
+    3. Если не нашли - создаем нового клиента в clients, начисляем бонусы, записываем в leads
+    
+    Возвращает: (client, was_new) - был ли клиент новым
     """
     phone = normalize_phone(phone_raw)
     phone_digits = normalize_phone_digits(phone)
@@ -428,81 +475,36 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
     async with pool.acquire() as conn:
         async with conn.transaction():
             cols = await _clients_columns(conn)
-            client_by_tg = await _fetch_client_by_tg(conn, user.id)
+            
+            # Ищем клиента ТОЛЬКО по номеру телефона
             if "phone_digits" in cols and phone_digits:
-                client_by_phone = await conn.fetchrow(
+                client = await conn.fetchrow(
                     "SELECT * FROM clients WHERE phone_digits=$1",
                     phone_digits,
                 )
             else:
-                client_by_phone = await conn.fetchrow(
+                client = await conn.fetchrow(
                     "SELECT * FROM clients WHERE phone=$1",
                     phone,
                 )
-
-            was_merged = False
-            target_id: Optional[int] = None
             
-            if client_by_phone:
-                # Клиент найден по телефону - используем его, добавляем недостающие поля
-                target_id = client_by_phone["id"]
-                was_merged = (client_by_tg is not None and client_by_tg["id"] != client_by_phone["id"])
+            was_new = False
+            
+            if client:
+                # Клиент найден по номеру телефона
+                client_id = client["id"]
                 
                 # Начисляем бонусы за подписку (если еще не начисляли)
-                existing_signup_bonus = await conn.fetchval(
-                    """
-                    SELECT COUNT(*) FROM bonus_transactions
-                    WHERE client_id = $1 AND reason = 'bot_signup'
-                    """,
-                    client_by_phone["id"]
-                )
-                if existing_signup_bonus == 0:
-                    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-                    await conn.execute(
-                        """
-                        UPDATE clients
-                        SET bonus_balance = bonus_balance + $1,
-                            bot_bonus_granted = true
-                        WHERE id=$2
-                        """,
-                        ONBOARDING_BONUS,
-                        client_by_phone["id"],
-                    )
-                    await conn.execute(
-                        """
-                        INSERT INTO bonus_transactions(client_id, order_id, delta, reason, expires_at)
-                        VALUES ($1, NULL, $2, 'bot_signup', $3)
-                        """,
-                        client_by_phone["id"],
-                        ONBOARDING_BONUS,
-                        expires_at,
-                    )
+                await _grant_signup_bonus_if_needed(conn, client_id)
                 
-                # Если был клиент по tg_id (другая запись), переносим данные и удаляем его
-                if client_by_tg and client_by_tg["id"] != client_by_phone["id"]:
-                    # Переносим заказы и транзакции от клиента по tg_id к клиенту по телефону
-                    await conn.execute(
-                        "UPDATE orders SET client_id=$1 WHERE client_id=$2",
-                        client_by_phone["id"],
-                        client_by_tg["id"]
-                    )
-                    await conn.execute(
-                        "UPDATE bonus_transactions SET client_id=$1 WHERE client_id=$2",
-                        client_by_phone["id"],
-                        client_by_tg["id"]
-                    )
-                    # Удаляем клиента по tg_id
-                    await conn.execute("DELETE FROM clients WHERE id=$1", client_by_tg["id"])
-                
-                # Обновляем клиента по телефону: добавляем недостающие поля (tg_id, username)
-                # НЕ меняем preferred_contact и wahelp_preferred_channel (оставляем как есть)
+                # Обновляем клиента: заполняем tg_user_id если не заполнено, обновляем bot поля
                 updates: list[str] = [
                     "bot_tg_user_id = COALESCE(bot_tg_user_id, $2)",
                     "bot_started = true",
                     "bot_started_at = COALESCE(bot_started_at, now())",
                     "status = 'client'",
                 ]
-                params: list[object] = [client_by_phone["id"], user.id]
+                params: list[object] = [client_id, user.id]
                 
                 if "tg_user_id" in cols:
                     updates.append("tg_user_id = COALESCE(tg_user_id, $2)")
@@ -518,39 +520,12 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
                         client = await _update_client_tg_fields(conn, int(client["id"]), user)
                     except Exception:
                         pass
-            elif client_by_tg:
-                # Клиент найден по tg_id, но нет по телефону
-                target_id = client_by_tg["id"]
-                # Обновляем клиента: добавляем телефон и обновляем поля
-                # НЕ меняем preferred_contact и wahelp_preferred_channel (оставляем как есть)
-                updates: list[str] = [
-                    "phone = $2",
-                    "bot_started = true",
-                    "bot_started_at = COALESCE(bot_started_at, now())",
-                    "status = 'client'",
-                ]
-                params: list[object] = [target_id, phone]
-                
-                if "tg_user_id" in cols:
-                    updates.append("tg_user_id = COALESCE(tg_user_id, $3)")
-                    params.append(user.id)
-                
-                if "last_updated" in cols:
-                    updates.append("last_updated = NOW()")
-                
-                sql = "UPDATE clients SET " + ", ".join(updates) + " WHERE id=$1 RETURNING *"
-                client = await conn.fetchrow(sql, *params)
-                if client:
-                    try:
-                        client = await _update_client_tg_fields(conn, int(client["id"]), user)
-                    except Exception:
-                        pass
-
-            if target_id is None:
-                # Новый клиент - создаем запись
-                # НЕ устанавливаем preferred_contact (будет NULL или значение по умолчанию)
+            else:
+                # Клиент не найден - создаем нового
+                was_new = True
                 name_col = await _clients_name_column(conn)
                 has_tg_user_id = await _clients_has_column(conn, "tg_user_id")
+                
                 columns = f"{name_col}, phone, status, bot_tg_user_id, bot_started, bot_started_at"
                 values = "$1, $2, 'client', $3, true, now()"
                 params: list[object] = [
@@ -558,37 +533,56 @@ async def upsert_contact(user: User, phone_raw: str, name: Optional[str]) -> Tup
                     phone,
                     user.id,
                 ]
+                
                 if has_tg_user_id:
                     columns += ", tg_user_id"
                     values += ", $3"
+                
                 sql = f"INSERT INTO clients({columns}) VALUES ({values}) RETURNING *"
                 client = await conn.fetchrow(sql, *params)
+                
                 # Начисляем бонусы за подписку новому клиенту
-                expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-                await conn.execute(
-                    """
-                    UPDATE clients
-                    SET bonus_balance = bonus_balance + $1,
-                        bot_bonus_granted = true
-                    WHERE id=$2
-                    """,
-                    ONBOARDING_BONUS,
-                    client["id"],
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO bonus_transactions(client_id, order_id, delta, reason, expires_at)
-                    VALUES ($1, NULL, $2, 'bot_signup', $3)
-                    """,
-                    client["id"],
-                    ONBOARDING_BONUS,
-                    expires_at,
-                )
+                await _grant_signup_bonus_if_needed(conn, client["id"])
+                
+                # Записываем в leads
+                try:
+                    lead_cols = await conn.fetch(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'leads'
+                        """
+                    )
+                    lead_col_names = [col["column_name"] for col in lead_cols]
+                    has_tg_user_id_lead = "tg_user_id" in lead_col_names
+                    
+                    if has_tg_user_id_lead:
+                        await conn.execute(
+                            """
+                            INSERT INTO leads(name, phone, source, status, tg_user_id)
+                            VALUES ($1, $2, 'telegram_bot', 'new', $3)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            name or user.full_name or user.username or "Без имени",
+                            phone,
+                            user.id
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            INSERT INTO leads(name, phone, source, status)
+                            VALUES ($1, $2, 'telegram_bot', 'new')
+                            ON CONFLICT DO NOTHING
+                            """,
+                            name or user.full_name or user.username or "Без имени",
+                            phone
+                        )
+                except Exception as e:
+                    logging.warning(f"Не удалось записать в leads: {e}")
             
-            # Обновляем client после всех операций (получаем актуальные данные)
-            if target_id:
-                client = await conn.fetchrow("SELECT * FROM clients WHERE id=$1", target_id)
-            return client, was_merged
+            # Получаем актуальные данные клиента
+            client = await conn.fetchrow("SELECT * FROM clients WHERE id=$1", client["id"])
+            return client, was_new
 
 
 def format_admin_payload(kind: str, message: Message, client: Optional[asyncpg.Record]) -> str:
@@ -753,14 +747,14 @@ async def contact_handler(message: Message, state: FSMContext) -> None:
     if first or last:
         contact_name = " ".join([p for p in [first, last] if p])
     
-    client, was_merged = await upsert_contact(user, contact.phone_number, contact_name or user.full_name)
+    client, was_new = await upsert_contact(user, contact.phone_number, contact_name or user.full_name)
     await state.clear()
     
     # Отправляем сообщение о бонусах
     await send_bonus_message(client, user)
     
     # Уведомляем в чат о новом подписчике
-    await log_signup(client, user, was_merged)
+    await log_signup(client, user, was_new)
     
     await message.answer(
         "Спасибо! Номер сохранён. Теперь можете пользоваться меню.",
@@ -1113,14 +1107,14 @@ async def handle_manual_phone(message: Message, state: FSMContext) -> None:
     if re.match(r"^9\d{9}$", phone_text):
         normalized = normalize_phone(phone_text)
         user = message.from_user
-        client, was_merged = await upsert_contact(user, normalized, user.full_name)
+        client, was_new = await upsert_contact(user, normalized, user.full_name)
         await state.clear()
         
         # Отправляем сообщение о бонусах
         await send_bonus_message(client, user)
         
         # Уведомляем в чат о новом подписчике
-        await log_signup(client, user, was_merged)
+        await log_signup(client, user, was_new)
         
         await message.answer(
             f"✅ Номер {normalized} сохранён! Теперь можете пользоваться всеми функциями бота.",
