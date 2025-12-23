@@ -74,7 +74,22 @@ def needs_phone(client: Optional[asyncpg.Record]) -> bool:
     return not (client and client.get("phone"))
 
 
-def main_menu(require_contact: bool) -> ReplyKeyboardMarkup:
+def is_admin(user_id: Optional[int]) -> bool:
+    """Проверяет, является ли пользователь админом."""
+    if user_id is None:
+        return False
+    return user_id in ADMIN_TG_IDS
+
+
+def main_menu(require_contact: bool, user_id: Optional[int] = None) -> Optional[ReplyKeyboardMarkup]:
+    """
+    Возвращает клавиатуру главного меню или None для админов.
+    Админам клавиатура не показывается.
+    """
+    # Админам не показываем клавиатуру
+    if user_id is not None and is_admin(user_id):
+        return None
+    
     if require_contact:
         rows = [
             [KeyboardButton(text=BTN_SHARE_CONTACT, request_contact=True)],
@@ -95,7 +110,15 @@ def main_menu(require_contact: bool) -> ReplyKeyboardMarkup:
     )
 
 
-def contact_keyboard() -> ReplyKeyboardMarkup:
+def contact_keyboard(user_id: Optional[int] = None) -> Optional[ReplyKeyboardMarkup]:
+    """
+    Возвращает клавиатуру для запроса контакта или None для админов.
+    Админам клавиатура не показывается.
+    """
+    # Админам не показываем клавиатуру
+    if user_id is not None and is_admin(user_id):
+        return None
+    
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SHARE_CONTACT, request_contact=True)],
@@ -660,9 +683,10 @@ async def create_lead_and_notify_admin(message: Message) -> None:
 
 
 async def send_menu(message: Message, client: Optional[asyncpg.Record]) -> None:
+    user_id = message.from_user.id if message.from_user else None
     await message.answer(
         "Главное меню RaketaClean",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
     )
 
 
@@ -685,7 +709,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
                 "Привет! 👋\n\n"
                 "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.\n"
                 "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
-                reply_markup=main_menu(require_contact=True),
+                reply_markup=main_menu(require_contact=True, user_id=message.from_user.id),
                 parse_mode=ParseMode.HTML,
             )
         else:
@@ -693,7 +717,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             await message.answer(
                 "Привет! 👋\n\n"
                 "Выберите действие через меню:",
-                reply_markup=main_menu(require_contact=False),
+                reply_markup=main_menu(require_contact=False, user_id=message.from_user.id),
                 parse_mode=ParseMode.HTML,
             )
     else:
@@ -703,7 +727,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             "Этот бот будет присылать бонусы, акции и напоминания от RaketaClean.\n\n"
             "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.\n"
             "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
-            reply_markup=main_menu(require_contact=True),
+            reply_markup=main_menu(require_contact=True, user_id=message.from_user.id),
             parse_mode=ParseMode.HTML,
         )
 
@@ -718,7 +742,7 @@ async def contact_handler(message: Message, state: FSMContext) -> None:
     if contact.user_id and contact.user_id != user.id:
         await message.answer(
             "Пожалуйста, поделитесь собственным номером через кнопку.",
-            reply_markup=contact_keyboard(),
+            reply_markup=contact_keyboard(user_id=user.id),
         )
         return
     # aiogram Contact has no `full_name`; use user.full_name or contact's first/last name
@@ -739,7 +763,7 @@ async def contact_handler(message: Message, state: FSMContext) -> None:
     
     await message.answer(
         "Спасибо! Номер сохранён. Теперь можете пользоваться меню.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user.id),
     )
 
 
@@ -748,9 +772,10 @@ async def info_handler(message: Message) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     await message.answer(
         "Я могу показать бонусы или передать ваше сообщение администратору.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
     )
 
 
@@ -764,18 +789,20 @@ async def handle_question_text(message: Message, state: FSMContext) -> None:
     if message.text and message.text.strip().casefold() == BTN_CANCEL.lower():
         await state.clear()
         client = await get_client_by_tg(message.from_user.id)
+        user_id = message.from_user.id if message.from_user else None
         await message.answer(
             "Отменено. Выберите действие через меню:",
-            reply_markup=main_menu(require_contact=needs_phone(client)),
+            reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
         )
         return
     
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     payload = format_admin_payload("Вопрос от клиента", message, client)
     await notify_admins(payload)
     await message.answer(
         "Передал вопрос администратору. Ответим как можно скорее!",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
     )
     await state.clear()
 
@@ -790,18 +817,20 @@ async def handle_order_text(message: Message, state: FSMContext) -> None:
     if message.text and message.text.strip().casefold() == BTN_CANCEL.lower():
         await state.clear()
         client = await get_client_by_tg(message.from_user.id)
+        user_id = message.from_user.id if message.from_user else None
         await message.answer(
             "Отменено. Выберите действие через меню:",
-            reply_markup=main_menu(require_contact=needs_phone(client)),
+            reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
         )
         return
     
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     payload = format_admin_payload("Заявка на заказ", message, client)
     await notify_admins(payload)
     await message.answer(
         "Заказ передан администратору. Мы свяжемся, чтобы уточнить детали.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
     )
     await state.clear()
 
@@ -812,22 +841,23 @@ async def bonuses_handler(message: Message) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     if not client:
         await message.answer(
             "Не нашёл ваш профиль. Напишите администратору или попробуйте позже.",
-            reply_markup=main_menu(require_contact=True),
+            reply_markup=main_menu(require_contact=True, user_id=user_id),
         )
         return
     if needs_phone(client):
         await message.answer(
             "Бонусы отображаются после подтверждения номера. Нажмите «Поделиться номером».",
-            reply_markup=contact_keyboard(),
+            reply_markup=contact_keyboard(user_id=user_id),
         )
         return
     balance = client.get("bonus_balance") or 0
     await message.answer(
         f"На вашем бонусном счету <b>{balance}</b> бонусов. Можно оплатить ими до 50% заказа.",
-        reply_markup=main_menu(require_contact=False),
+        reply_markup=main_menu(require_contact=False, user_id=user_id),
     )
 
 
@@ -848,17 +878,18 @@ async def ask_question(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     if needs_phone(client):
         await message.answer(
             "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите его вручную.",
-            reply_markup=contact_keyboard(),
+            reply_markup=contact_keyboard(user_id=user_id),
         )
         return
     await state.set_state(ClientRequestFSM.waiting_question)
     cancel_keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
         resize_keyboard=True,
-    )
+    ) if not is_admin(user_id) else None
     await message.answer(
         "Опишите ваш вопрос. Чтобы отменить, нажмите «Отмена».",
         reply_markup=cancel_keyboard,
@@ -871,17 +902,18 @@ async def make_order(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     if needs_phone(client):
         await message.answer(
             "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
-            reply_markup=contact_keyboard(),
+            reply_markup=contact_keyboard(user_id=user_id),
         )
         return
     await state.set_state(ClientRequestFSM.waiting_order)
     cancel_keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
         resize_keyboard=True,
-    )
+    ) if not is_admin(user_id) else None
     await message.answer(
         "Расскажите, какая услуга нужна. Чтобы отменить, нажмите «Отмена».",
         reply_markup=cancel_keyboard,
@@ -1052,9 +1084,10 @@ async def cancel_handler(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
     await message.answer(
         "Ок, вернулись в главное меню.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
+        reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
     )
 
 
@@ -1066,11 +1099,12 @@ async def handle_manual_phone(message: Message, state: FSMContext) -> None:
         return
 
     phone_text = (message.text or "").strip()
+    user_id = message.from_user.id if message.from_user else None
     if not phone_text:
         await message.answer(
             "Пожалуйста, отправьте номер <b>текстом</b> в формате <b>9XXXXXXXXX</b> "
             "или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
-            reply_markup=contact_keyboard(),
+            reply_markup=contact_keyboard(user_id=user_id),
         )
         return
 
@@ -1089,14 +1123,14 @@ async def handle_manual_phone(message: Message, state: FSMContext) -> None:
         
         await message.answer(
             f"✅ Номер {normalized} сохранён! Теперь можете пользоваться всеми функциями бота.",
-            reply_markup=main_menu(require_contact=needs_phone(client)),
+            reply_markup=main_menu(require_contact=needs_phone(client), user_id=user.id),
         )
         return
 
     await message.answer(
         "❌ Неверный формат номера. Введите номер в формате: <b>9XXXXXXXXX</b> (10 цифр, начинается с 9)\n\n"
         "Или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
-        reply_markup=contact_keyboard(),
+        reply_markup=contact_keyboard(user_id=user_id),
     )
 
 
@@ -1139,9 +1173,10 @@ async def fallback(message: Message, state: FSMContext) -> None:
         # Это кнопка меню, но не обработалась другим handler'ом
         # Просто показываем меню
         client = await get_client_by_tg(message.from_user.id)
+        user_id = message.from_user.id if message.from_user else None
         await message.answer(
             "Выберите действие через меню: бонусы, заказ или вопрос.",
-            reply_markup=main_menu(require_contact=needs_phone(client)),
+            reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
         )
         return
     
@@ -1157,10 +1192,11 @@ async def fallback(message: Message, state: FSMContext) -> None:
         print("[FALLBACK] Создание лида и отправка админу для клиента без телефона")
         logging.info("Создание лида и отправка админу для клиента без телефона")
         await create_lead_and_notify_admin(message)
+        user_id = message.from_user.id if message.from_user else None
         await message.answer(
             "Сообщение передано менеджеру. Мы свяжемся с вами в ближайшее время.\n\n"
             "⚠️ Для полного доступа к функциям бота укажите номер телефона.",
-            reply_markup=main_menu(require_contact=True),
+            reply_markup=main_menu(require_contact=True, user_id=user_id),
         )
     else:
         # Клиент с телефоном - отправляем как вопрос админу
@@ -1170,9 +1206,10 @@ async def fallback(message: Message, state: FSMContext) -> None:
         await notify_admins(payload)
         print("[FALLBACK] Вопрос отправлен админам")
         logging.info("Вопрос отправлен админам")
+        user_id = message.from_user.id if message.from_user else None
         await message.answer(
             "Передал вопрос администратору. Ответим как можно скорее!",
-            reply_markup=main_menu(require_contact=False),
+            reply_markup=main_menu(require_contact=False, user_id=user_id),
         )
 
 
