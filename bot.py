@@ -130,9 +130,15 @@ async def safe_send_message(chat_id: int, text: str, **kwargs) -> Optional[Messa
 
 
 async def notify_admins(text: str) -> None:
+    logging.info(f"notify_admins вызван. ADMIN_TG_IDS: {ADMIN_TG_IDS}, количество админов: {len(ADMIN_TG_IDS)}")
+    if not ADMIN_TG_IDS:
+        logging.warning("ADMIN_TG_IDS пуст! Сообщение не будет отправлено никому.")
+        return
     for admin_id in ADMIN_TG_IDS:
         try:
+            logging.info(f"Отправка сообщения админу {admin_id}")
             await bot.send_message(admin_id, text)
+            logging.info(f"Сообщение успешно отправлено админу {admin_id}")
         except Exception as exc:
             logging.error("Не удалось уведомить админа %s: %s", admin_id, exc)
 
