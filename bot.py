@@ -15,6 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram import BaseMiddleware
 from aiogram.types import (
+    BotCommand,
     ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -1218,6 +1219,12 @@ async def main() -> None:
     # Регистрируем middleware для обработки отписки
     # В aiogram 3.x middleware регистрируется через update
     dp.update.middleware(UnsubscribeMiddleware())
+    
+    # Настраиваем команды бота (синее меню слева)
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Начать работу с ботом"),
+        BotCommand(command="info", description="Этот бот может"),
+    ])
     
     await init_pool(min_size=1, max_size=5)
     try:
