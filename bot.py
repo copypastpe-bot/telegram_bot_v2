@@ -668,6 +668,7 @@ async def send_menu(message: Message, client: Optional[asyncpg.Record]) -> None:
 
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext) -> None:
+    print(f"[START_HANDLER] Обработка команды /start от {message.from_user.id if message.from_user else 'unknown'}")
     await state.clear()
     if not message.from_user:
         return
@@ -709,6 +710,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
 
 @dp.message(F.contact)
 async def contact_handler(message: Message, state: FSMContext) -> None:
+    print(f"[CONTACT_HANDLER] Обработка контакта от {message.from_user.id if message.from_user else 'unknown'}")
     contact = message.contact
     user = message.from_user
     if not contact or not user:
@@ -754,6 +756,7 @@ async def info_handler(message: Message) -> None:
 
 @dp.message(StateFilter(ClientRequestFSM.waiting_question))
 async def handle_question_text(message: Message, state: FSMContext) -> None:
+    print(f"[HANDLE_QUESTION_TEXT] Обработка текста в состоянии waiting_question от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
@@ -768,6 +771,7 @@ async def handle_question_text(message: Message, state: FSMContext) -> None:
 
 @dp.message(StateFilter(ClientRequestFSM.waiting_order))
 async def handle_order_text(message: Message, state: FSMContext) -> None:
+    print(f"[HANDLE_ORDER_TEXT] Обработка текста в состоянии waiting_order от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
@@ -807,6 +811,7 @@ async def bonuses_handler(message: Message) -> None:
 
 @dp.message(F.text.casefold() == BTN_SHARE_CONTACT.lower())
 async def share_contact_prompt(message: Message, state: FSMContext) -> None:
+    print(f"[SHARE_CONTACT_PROMPT] Обработка кнопки 'Поделиться номером' от {message.from_user.id if message.from_user else 'unknown'}")
     await state.set_state(ClientRequestFSM.waiting_phone_manual)
     await message.answer(
         "Нажмите кнопку ниже, чтобы отправить номер автоматически.\n\n"
@@ -836,6 +841,7 @@ async def ask_question(message: Message, state: FSMContext) -> None:
 
 @dp.message(F.text.casefold() == BTN_ORDER.lower())
 async def make_order(message: Message, state: FSMContext) -> None:
+    print(f"[MAKE_ORDER] Обработка кнопки 'Сделать заказ' от {message.from_user.id if message.from_user else 'unknown'}")
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
@@ -855,6 +861,7 @@ async def make_order(message: Message, state: FSMContext) -> None:
 @dp.message(F.text.casefold() == BTN_PRICE.lower())
 async def price_handler(message: Message) -> None:
     """Обработчик кнопки 'Прайс' - показывает ссылку на прайс на сайте"""
+    print(f"[PRICE_HANDLER] Обработка кнопки 'Прайс' от {message.from_user.id if message.from_user else 'unknown'}")
     text = "💰 <b>Прайс на услуги</b>\n\nПосмотрите актуальные цены на нашем сайте:"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -867,6 +874,7 @@ async def price_handler(message: Message) -> None:
 @dp.message(F.text.casefold() == BTN_SCHEDULE.lower())
 async def schedule_handler(message: Message) -> None:
     """Обработчик кнопки 'Режим работы' - показывает контактную информацию"""
+    print(f"[SCHEDULE_HANDLER] Обработка кнопки 'Режим работы' от {message.from_user.id if message.from_user else 'unknown'}")
     text = (
         "🕐 <b>Режим работы:</b>\n"
         "Ежедневно с 9:00 до 19:00\n\n"
@@ -1023,6 +1031,7 @@ async def cancel_handler(message: Message, state: FSMContext) -> None:
 @dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual), F.text)
 async def handle_manual_phone(message: Message, state: FSMContext) -> None:
     """Обработка ручного ввода номера телефона (только текстовые сообщения)."""
+    print(f"[HANDLE_MANUAL_PHONE] Обработка текста в состоянии waiting_phone_manual от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
     if not message.from_user:
         return
 
@@ -1064,6 +1073,7 @@ async def handle_manual_phone(message: Message, state: FSMContext) -> None:
 @dp.message(StateFilter(ClientRequestFSM.waiting_phone_manual))
 async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> None:
     """Защита от не-текстовых сообщений в режиме ручного ввода номера."""
+    print(f"[HANDLE_MANUAL_PHONE_NONTEXT] Обработка не-текста в состоянии waiting_phone_manual от {message.from_user.id if message.from_user else 'unknown'}")
     if not message.from_user:
         return
     # Контакт обработает отдельный хэндлер F.contact
