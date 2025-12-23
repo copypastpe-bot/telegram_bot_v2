@@ -685,14 +685,14 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             )
     else:
         # Новый клиент - показываем приветствие с запросом телефона
-    await message.answer(
+        await message.answer(
             "Привет! 👋\n\n"
             "Этот бот будет присылать бонусы, акции и напоминания от RaketaClean.\n\n"
             "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.\n"
             "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
             reply_markup=main_menu(require_contact=True),
             parse_mode=ParseMode.HTML,
-    )
+        )
 
 
 @dp.message(F.contact)
@@ -1076,11 +1076,11 @@ async def fallback(message: Message, state: FSMContext) -> None:
     if is_menu_button(message.text):
         # Это кнопка меню, но не обработалась другим handler'ом
         # Просто показываем меню
-    client = await get_client_by_tg(message.from_user.id)
-    await message.answer(
-        "Выберите действие через меню: бонусы, заказ или вопрос.",
-        reply_markup=main_menu(require_contact=needs_phone(client)),
-    )
+        client = await get_client_by_tg(message.from_user.id)
+        await message.answer(
+            "Выберите действие через меню: бонусы, заказ или вопрос.",
+            reply_markup=main_menu(require_contact=needs_phone(client)),
+        )
         return
     
     # Это произвольное текстовое сообщение
