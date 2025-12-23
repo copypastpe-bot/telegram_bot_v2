@@ -685,14 +685,14 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             )
     else:
         # Новый клиент - показываем приветствие с запросом телефона
-        await message.answer(
+    await message.answer(
             "Привет! 👋\n\n"
             "Этот бот будет присылать бонусы, акции и напоминания от RaketaClean.\n\n"
             "⚠️ <b>Важно:</b> Чтобы пользоваться ботом, нужно указать номер телефона.\n"
             "Поделитесь номером через кнопку ниже или введите его вручную (формат: 9XXXXXXXXX).",
             reply_markup=main_menu(require_contact=True),
             parse_mode=ParseMode.HTML,
-        )
+    )
 
 
 @dp.message(F.contact)
@@ -1062,117 +1062,6 @@ async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> No
     )
 
 
-@dp.message(F.text)
-async def handle_rewash_response(message: Message, state: FSMContext) -> None:
-    """Обработка ответов на перемыв (1, 'спасибо', 2)."""
-    # Сначала проверяем, не является ли это кнопкой меню или командой
-    if is_menu_button(message.text):
-        return  # Передаем обработку другим handlers
-    
-    if await state.get_state():
-        # Если пользователь в процессе другого действия, не обрабатываем
-        return
-    
-    if not message.from_user or not message.text:
-        return
-    
-    text = message.text.strip().lower()
-    
-    # Проверяем, является ли это ответом на перемыв (1, "спасибо", 2)
-    is_rewash_response = False
-    rewash_result = None
-    
-    if text == "1" or text.startswith("1 "):
-        is_rewash_response = True
-        rewash_result = 1  # Устранено
-    elif text in ("спасибо", "спс", "благодарю", "благодарность"):
-        is_rewash_response = True
-        rewash_result = 1  # Устранено (благодарность)
-    elif text == "2" or text.startswith("2 "):
-        is_rewash_response = True
-        rewash_result = 2  # Осталось
-    
-    if not is_rewash_response:
-        # Не ответ на перемыв, передаем дальше
-        return
-    
-    # Получаем клиента
-    client = await get_client_by_tg(message.from_user.id)
-    if not client:
-        return
-    
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        # Находим ожидающий ответ перемыв для этого клиента
-        pending_rewash = await conn.fetchrow(
-            """
-            SELECT id, rewash_cycle
-            FROM orders
-            WHERE client_id = $1
-              AND rewash_flag = true
-              AND rewash_result IS NULL
-              AND rewash_followup_scheduled_at IS NOT NULL
-            ORDER BY rewash_followup_scheduled_at DESC
-            LIMIT 1
-            """,
-            client["id"]
-        )
-        
-        if not pending_rewash:
-            # Нет ожидающих ответа перемывов
-            return
-        
-        order_id = pending_rewash["id"]
-        
-        # Обновляем результат перемыва
-        await conn.execute(
-            """
-            UPDATE orders
-            SET rewash_result = $1,
-                rewash_result_at = NOW()
-            WHERE id = $2
-            """,
-            rewash_result,
-            order_id
-        )
-        
-        if rewash_result == 1:
-            # Устранено - отправляем ссылки на отзовики
-            review_text = (
-                "Спасибо за обратную связь! 🙏\n\n"
-                "Если вам понравился наш сервис, будем благодарны за отзыв:\n\n"
-                "📝 Яндекс: https://yandex.ru/maps/org/raketaclean/\n"
-                "📝 2ГИС: https://2gis.ru/nnovgorod/firm/70000001012345678\n"
-                "📝 Google: https://g.page/r/raketaclean/review"
-            )
-            await message.answer(review_text)
-        else:
-            # Осталось - уведомляем админов
-            admin_ids_str = os.getenv("ADMIN_TG_IDS", "")
-            admin_ids = tuple(int(x) for x in admin_ids_str.split()) if admin_ids_str else ()
-            
-            client_name = client.get("full_name") or client.get("name") or "Клиент"
-            client_phone = client.get("phone") or "неизвестно"
-            
-            admin_msg = (
-                f"⚠️ <b>Клиент сообщил о проблеме после перемыва</b>\n"
-                f"Заказ: #{order_id}\n"
-                f"Клиент: {client_name}\n"
-                f"Телефон: {client_phone}\n"
-                f"Ответ: {message.text}"
-            )
-            
-            for admin_id in admin_ids:
-                try:
-                    await bot.send_message(admin_id, admin_msg, parse_mode=ParseMode.HTML)
-                except Exception as exc:
-                    logging.error("Не удалось уведомить админа %s: %s", admin_id, exc)
-            
-            await message.answer(
-                "Спасибо за обратную связь! Мы обязательно разберемся с проблемой и свяжемся с вами."
-            )
-
-
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     """Обработчик всех сообщений, которые не попали в другие handlers."""
@@ -1187,11 +1076,11 @@ async def fallback(message: Message, state: FSMContext) -> None:
     if is_menu_button(message.text):
         # Это кнопка меню, но не обработалась другим handler'ом
         # Просто показываем меню
-        client = await get_client_by_tg(message.from_user.id)
-        await message.answer(
-            "Выберите действие через меню: бонусы, заказ или вопрос.",
-            reply_markup=main_menu(require_contact=needs_phone(client)),
-        )
+    client = await get_client_by_tg(message.from_user.id)
+    await message.answer(
+        "Выберите действие через меню: бонусы, заказ или вопрос.",
+        reply_markup=main_menu(require_contact=needs_phone(client)),
+    )
         return
     
     # Это произвольное текстовое сообщение
