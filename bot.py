@@ -1143,10 +1143,11 @@ async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> No
     # Контакт обработает отдельный хэндлер F.contact
     if message.contact:
         return
+    user_id = message.from_user.id if message.from_user else None
     await message.answer(
         "Пожалуйста, отправьте номер <b>текстом</b> в формате <b>9XXXXXXXXX</b> "
         "или нажмите кнопку ниже, чтобы поделиться номером автоматически.",
-        reply_markup=contact_keyboard(),
+        reply_markup=contact_keyboard(user_id=user_id),
     )
 
 
