@@ -785,6 +785,17 @@ async def handle_order_text(message: Message, state: FSMContext) -> None:
     print(f"[HANDLE_ORDER_TEXT] Обработка текста в состоянии waiting_order от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
     if not message.from_user:
         return
+    
+    # Проверяем, не нажал ли пользователь "Отмена"
+    if message.text and message.text.strip().casefold() == BTN_CANCEL.lower():
+        await state.clear()
+        client = await get_client_by_tg(message.from_user.id)
+        await message.answer(
+            "Отменено. Выберите действие через меню:",
+            reply_markup=main_menu(require_contact=needs_phone(client)),
+        )
+        return
+    
     client = await get_client_by_tg(message.from_user.id)
     payload = format_admin_payload("Заявка на заказ", message, client)
     await notify_admins(payload)
@@ -867,9 +878,13 @@ async def make_order(message: Message, state: FSMContext) -> None:
         )
         return
     await state.set_state(ClientRequestFSM.waiting_order)
+    cancel_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+    )
     await message.answer(
-        "Расскажите, какая услуга нужна. Пока просто передаю текст администратору.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Расскажите, какая услуга нужна. Чтобы отменить, нажмите «Отмена».",
+        reply_markup=cancel_keyboard,
     )
 
 
