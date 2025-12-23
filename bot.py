@@ -81,8 +81,8 @@ def main_menu(require_contact: bool) -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_PRICE), KeyboardButton(text=BTN_SCHEDULE)],
         ]
     else:
+        # Когда номер уже указан, кнопку "Поделиться номером" не показываем
         rows = [
-            [KeyboardButton(text=BTN_SHARE_CONTACT, request_contact=True)],
             [KeyboardButton(text=BTN_BONUS)],
             [KeyboardButton(text=BTN_ORDER), KeyboardButton(text=BTN_QUESTION)],
             [KeyboardButton(text=BTN_PRICE), KeyboardButton(text=BTN_SCHEDULE)],
