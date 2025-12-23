@@ -130,16 +130,22 @@ async def safe_send_message(chat_id: int, text: str, **kwargs) -> Optional[Messa
 
 
 async def notify_admins(text: str) -> None:
+    print(f"[NOTIFY_ADMINS] Вызван. ADMIN_TG_IDS: {ADMIN_TG_IDS}, количество админов: {len(ADMIN_TG_IDS)}")
+    print(f"[NOTIFY_ADMINS] Текст сообщения: {text[:100]}...")
     logging.info(f"notify_admins вызван. ADMIN_TG_IDS: {ADMIN_TG_IDS}, количество админов: {len(ADMIN_TG_IDS)}")
     if not ADMIN_TG_IDS:
+        print("[NOTIFY_ADMINS] ADMIN_TG_IDS пуст! Сообщение не будет отправлено никому.")
         logging.warning("ADMIN_TG_IDS пуст! Сообщение не будет отправлено никому.")
         return
     for admin_id in ADMIN_TG_IDS:
         try:
+            print(f"[NOTIFY_ADMINS] Отправка сообщения админу {admin_id}")
             logging.info(f"Отправка сообщения админу {admin_id}")
             await bot.send_message(admin_id, text)
+            print(f"[NOTIFY_ADMINS] Сообщение успешно отправлено админу {admin_id}")
             logging.info(f"Сообщение успешно отправлено админу {admin_id}")
         except Exception as exc:
+            print(f"[NOTIFY_ADMINS] Ошибка при отправке админу {admin_id}: {exc}")
             logging.error("Не удалось уведомить админа %s: %s", admin_id, exc)
 
 
@@ -776,6 +782,7 @@ async def handle_order_text(message: Message, state: FSMContext) -> None:
 
 @dp.message(F.text.casefold() == BTN_BONUS.lower())
 async def bonuses_handler(message: Message) -> None:
+    print(f"[BONUSES_HANDLER] Обработка кнопки 'Мои бонусы' от {message.from_user.id if message.from_user else 'unknown'}")
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
@@ -810,6 +817,7 @@ async def share_contact_prompt(message: Message, state: FSMContext) -> None:
 
 @dp.message(F.text.casefold() == BTN_QUESTION.lower())
 async def ask_question(message: Message, state: FSMContext) -> None:
+    print(f"[ASK_QUESTION] Обработка кнопки 'Задать вопрос' от {message.from_user.id if message.from_user else 'unknown'}")
     if not message.from_user:
         return
     client = await get_client_by_tg(message.from_user.id)
@@ -1071,7 +1079,9 @@ async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> No
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     """Обработчик всех сообщений, которые не попали в другие handlers."""
-    logging.info(f"Fallback handler вызван для сообщения от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
+    # Используем print для гарантированного вывода в логи
+    print(f"[FALLBACK] Handler вызван для сообщения от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
+    logging.info(f"[FALLBACK] Handler вызван для сообщения от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
     
     current_state = await state.get_state()
     if current_state:
@@ -1096,12 +1106,15 @@ async def fallback(message: Message, state: FSMContext) -> None:
         return
     
     # Это произвольное текстовое сообщение
+    print(f"[FALLBACK] Обработка произвольного текста от пользователя {message.from_user.id}")
     logging.info(f"Обработка произвольного текста от пользователя {message.from_user.id}")
     client = await get_client_by_tg(message.from_user.id)
+    print(f"[FALLBACK] Клиент найден: {client is not None}, нужен телефон: {needs_phone(client) if client else 'N/A'}")
     logging.info(f"Клиент найден: {client is not None}, нужен телефон: {needs_phone(client) if client else 'N/A'}")
     
     if needs_phone(client):
         # Клиент без телефона - создаем лид и отправляем админу
+        print("[FALLBACK] Создание лида и отправка админу для клиента без телефона")
         logging.info("Создание лида и отправка админу для клиента без телефона")
         await create_lead_and_notify_admin(message)
         await message.answer(
@@ -1111,9 +1124,11 @@ async def fallback(message: Message, state: FSMContext) -> None:
         )
     else:
         # Клиент с телефоном - отправляем как вопрос админу
+        print(f"[FALLBACK] Отправка вопроса админу для клиента с телефоном. ADMIN_TG_IDS: {ADMIN_TG_IDS}")
         logging.info(f"Отправка вопроса админу для клиента с телефоном. ADMIN_TG_IDS: {ADMIN_TG_IDS}")
         payload = format_admin_payload("Вопрос от клиента", message, client)
         await notify_admins(payload)
+        print("[FALLBACK] Вопрос отправлен админам")
         logging.info("Вопрос отправлен админам")
         await message.answer(
             "Передал вопрос администратору. Ответим как можно скорее!",
