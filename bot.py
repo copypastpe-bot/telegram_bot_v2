@@ -2,10 +2,13 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
+from zoneinfo import ZoneInfo
 from typing import Optional, Tuple
 
 import asyncpg
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
@@ -1209,6 +1212,77 @@ async def fallback(message: Message, state: FSMContext) -> None:
         )
 
 
+async def cleanup_expired_bonuses() -> None:
+    """
+    Ежедневная очистка клиентов с истекшими бонусами за подписку.
+    Удаляет клиентов, у которых:
+    - Истек срок действия бонусов за подписку (expires_at <= сегодня)
+    - Нет заказов (дата последнего заказа пуста)
+    """
+    MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+    today_moscow = datetime.now(MOSCOW_TZ).date()
+    
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Находим клиентов для удаления
+            clients_to_delete = await conn.fetch("""
+                SELECT DISTINCT
+                    c.id,
+                    c.phone,
+                    c.bonus_balance,
+                    c.bot_tg_user_id,
+                    bt.expires_at
+                FROM clients c
+                JOIN bonus_transactions bt ON bt.client_id = c.id
+                WHERE bt.reason = 'bot_signup'
+                  AND DATE(bt.expires_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow') <= $1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM orders WHERE client_id = c.id
+                  )
+            """, today_moscow)
+            
+            deleted_count = 0
+            for client in clients_to_delete:
+                client_id = client["id"]
+                bot_tg_user_id = client.get("bot_tg_user_id")
+                bonus_balance = client.get("bonus_balance") or 0
+                
+                # Отправляем сообщение клиенту перед удалением
+                if bot_tg_user_id:
+                    try:
+                        await safe_send_message(
+                            bot_tg_user_id,
+                            "Ваши бонусы сгорели. Следите за новыми акциями."
+                        )
+                    except Exception as e:
+                        logging.warning(f"Не удалось отправить сообщение клиенту {bot_tg_user_id} перед удалением: {e}")
+                
+                # Списываем бонусы (если баланс > 0)
+                if bonus_balance > 0:
+                    await conn.execute(
+                        """
+                        UPDATE clients
+                        SET bonus_balance = bonus_balance - LEAST(bonus_balance, $1)
+                        WHERE id = $2
+                        """,
+                        ONBOARDING_BONUS,
+                        client_id
+                    )
+                
+                # Удаляем клиента (транзакции удалятся автоматически через CASCADE)
+                await conn.execute("DELETE FROM clients WHERE id = $1", client_id)
+                deleted_count += 1
+                
+                logging.info(
+                    f"Удален клиент ID={client_id}, телефон={client.get('phone')}, "
+                    f"баланс был={bonus_balance}, бонусы истекли={client['expires_at']}"
+                )
+            
+            if deleted_count > 0:
+                logging.info(f"Очистка завершена: удалено {deleted_count} клиентов с истекшими бонусами")
+
+
 async def main() -> None:
     # Регистрируем middleware для обработки отписки
     # В aiogram 3.x middleware регистрируется через update
@@ -1221,10 +1295,24 @@ async def main() -> None:
     ])
     
     await init_pool(min_size=1, max_size=5)
+    
+    # Настраиваем планировщик для ежедневной очистки истекших бонусов
+    scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
+    scheduler.add_job(
+        cleanup_expired_bonuses,
+        trigger=CronTrigger(hour=12, minute=0),  # 12:00 МСК ежедневно
+        id="cleanup_expired_bonuses",
+        name="Очистка истекших бонусов",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logging.info("Планировщик запущен: очистка истекших бонусов ежедневно в 12:00 МСК")
+    
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     finally:
+        scheduler.shutdown()
         await close_pool()
 
 
