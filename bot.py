@@ -1065,15 +1065,21 @@ async def handle_manual_phone_nontext(message: Message, state: FSMContext) -> No
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     """Обработчик всех сообщений, которые не попали в другие handlers."""
-    if await state.get_state():
+    logging.info(f"Fallback handler вызван для сообщения от {message.from_user.id if message.from_user else 'unknown'}: {message.text[:50] if message.text else 'no text'}")
+    
+    current_state = await state.get_state()
+    if current_state:
+        logging.info(f"Пользователь в состоянии FSM: {current_state}")
         await message.answer("Пожалуйста, завершите текущий шаг или напишите «Отмена».")
         return
     
     if not message.from_user or not message.text:
+        logging.info("Нет пользователя или текста в сообщении")
         return
     
     # Проверяем, является ли это кнопкой меню
     if is_menu_button(message.text):
+        logging.info(f"Текст '{message.text}' распознан как кнопка меню")
         # Это кнопка меню, но не обработалась другим handler'ом
         # Просто показываем меню
         client = await get_client_by_tg(message.from_user.id)
@@ -1084,10 +1090,13 @@ async def fallback(message: Message, state: FSMContext) -> None:
         return
     
     # Это произвольное текстовое сообщение
+    logging.info(f"Обработка произвольного текста от пользователя {message.from_user.id}")
     client = await get_client_by_tg(message.from_user.id)
+    logging.info(f"Клиент найден: {client is not None}, нужен телефон: {needs_phone(client) if client else 'N/A'}")
     
     if needs_phone(client):
         # Клиент без телефона - создаем лид и отправляем админу
+        logging.info("Создание лида и отправка админу для клиента без телефона")
         await create_lead_and_notify_admin(message)
         await message.answer(
             "Сообщение передано менеджеру. Мы свяжемся с вами в ближайшее время.\n\n"
@@ -1096,8 +1105,10 @@ async def fallback(message: Message, state: FSMContext) -> None:
         )
     else:
         # Клиент с телефоном - отправляем как вопрос админу
+        logging.info(f"Отправка вопроса админу для клиента с телефоном. ADMIN_TG_IDS: {ADMIN_TG_IDS}")
         payload = format_admin_payload("Вопрос от клиента", message, client)
         await notify_admins(payload)
+        logging.info("Вопрос отправлен админам")
         await message.answer(
             "Передал вопрос администратору. Ответим как можно скорее!",
             reply_markup=main_menu(require_contact=False),
