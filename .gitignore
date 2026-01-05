@@ -5,3 +5,4 @@ __pycache__/
 .env.*
 *.dump
 .DS_Store
+._*
