@@ -51,6 +51,7 @@ dp = Dispatcher()
 BTN_BONUS = "Мои бонусы"
 BTN_ORDER = "Сделать заказ"
 BTN_QUESTION = "Задать вопрос"
+BTN_MEDIA = "Отправить фото/видео"
 BTN_SHARE_CONTACT = "📱 Поделиться номером"
 BTN_CANCEL = "Отмена"
 BTN_PRICE = "💰 Прайс"
@@ -61,6 +62,7 @@ MENU_BUTTONS = [
     BTN_BONUS,
     BTN_ORDER,
     BTN_QUESTION,
+    BTN_MEDIA,
     BTN_SHARE_CONTACT,
     BTN_CANCEL,
     BTN_PRICE,
@@ -71,6 +73,7 @@ MENU_BUTTONS = [
 class ClientRequestFSM(StatesGroup):
     waiting_question = State()
     waiting_order = State()
+    waiting_media = State()
     waiting_phone_manual = State()
 
 
@@ -104,6 +107,7 @@ def main_menu(require_contact: bool, user_id: Optional[int] = None) -> Optional[
         rows = [
             [KeyboardButton(text=BTN_BONUS)],
             [KeyboardButton(text=BTN_ORDER), KeyboardButton(text=BTN_QUESTION)],
+            [KeyboardButton(text=BTN_MEDIA)],
             [KeyboardButton(text=BTN_PRICE), KeyboardButton(text=BTN_SCHEDULE)],
         ]
     # Кнопку "Отмена" не показываем в главном меню - мы и так в главном меню
@@ -226,6 +230,7 @@ async def send_bonus_message(client: asyncpg.Record, user: User) -> None:
         "Теперь вам доступны функции:",
         "• Задать вопрос",
         "• Сделать заказ",
+        "• Отправить фото/видео",
         "• Посмотреть бонусы",
     ])
     
@@ -604,6 +609,42 @@ def format_admin_payload(kind: str, message: Message, client: Optional[asyncpg.R
     return "\n".join(lines)
 
 
+def format_admin_media_payload(kind: str, message: Message, client: Optional[asyncpg.Record]) -> str:
+    user = message.from_user
+    phone = client["phone"] if client and client.get("phone") else "не указан"
+    username = f"@{user.username}" if user and user.username else "—"
+    caption = message.caption or "—"
+    lines = [
+        f"📷 {kind}",
+        f"Имя: {user.full_name if user else '—'}",
+        f"Username: {username}",
+        f"TG ID: {user.id if user else '—'}",
+        f"Телефон: {phone}",
+        "",
+        f"Комментарий: {caption}",
+    ]
+    return "\n".join(lines)
+
+
+async def notify_admins_media(kind: str, message: Message, client: Optional[asyncpg.Record]) -> None:
+    if not ADMIN_TG_IDS:
+        logging.warning("ADMIN_TG_IDS пуст! Медиа не будет отправлено.")
+        return
+    caption = format_admin_media_payload(kind, message, client)
+    for admin_id in ADMIN_TG_IDS:
+        try:
+            if message.photo:
+                await bot.send_photo(admin_id, message.photo[-1].file_id, caption=caption)
+            elif message.video:
+                await bot.send_video(admin_id, message.video.file_id, caption=caption)
+            elif message.document:
+                await bot.send_document(admin_id, message.document.file_id, caption=caption)
+            else:
+                await bot.send_message(admin_id, caption)
+        except Exception as exc:
+            logging.error("Не удалось отправить медиа админу %s: %s", admin_id, exc)
+
+
 def is_menu_button(text: str) -> bool:
     """Проверяет, является ли текст кнопкой меню."""
     if not text:
@@ -915,6 +956,56 @@ async def make_order(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Расскажите, какая услуга нужна. Чтобы отменить, нажмите «Отмена».",
         reply_markup=cancel_keyboard,
+    )
+
+
+@dp.message(F.text.casefold() == BTN_MEDIA.lower())
+async def send_media_request(message: Message, state: FSMContext) -> None:
+    if not message.from_user:
+        return
+    client = await get_client_by_tg(message.from_user.id)
+    user_id = message.from_user.id if message.from_user else None
+    if needs_phone(client):
+        await message.answer(
+            "⚠️ Сначала нужно указать номер телефона. Поделитесь номером через кнопку или введите вручную.",
+            reply_markup=contact_keyboard(user_id=user_id),
+        )
+        return
+    await state.set_state(ClientRequestFSM.waiting_media)
+    cancel_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+    ) if not is_admin(user_id) else None
+    await message.answer(
+        "Отправьте фото или видео для оценки. Можно отправить несколько.\n"
+        "Когда закончите — нажмите «Отмена».",
+        reply_markup=cancel_keyboard,
+    )
+
+
+@dp.message(StateFilter(ClientRequestFSM.waiting_media))
+async def handle_media_upload(message: Message, state: FSMContext) -> None:
+    if not message.from_user:
+        return
+    # Отмена
+    if message.text and message.text.strip().casefold() == BTN_CANCEL.lower():
+        await state.clear()
+        client = await get_client_by_tg(message.from_user.id)
+        user_id = message.from_user.id if message.from_user else None
+        await message.answer(
+            "Готово. Выберите действие через меню:",
+            reply_markup=main_menu(require_contact=needs_phone(client), user_id=user_id),
+        )
+        return
+    # Разрешаем только фото/видео/документы
+    if not (message.photo or message.video or message.document):
+        return await message.answer(
+            "Пожалуйста, отправьте фото или видео. Для выхода нажмите «Отмена»."
+        )
+    client = await get_client_by_tg(message.from_user.id)
+    await notify_admins_media("Фото/видео от клиента", message, client)
+    await message.answer(
+        "Фото/видео передано администратору. Можно отправить еще или нажмите «Отмена»."
     )
 
 
