@@ -54,6 +54,7 @@ BTN_QUESTION = "Задать вопрос"
 BTN_MEDIA = "Отправить фото/видео"
 BTN_SHARE_CONTACT = "📱 Поделиться номером"
 BTN_CANCEL = "Отмена"
+BTN_CLOSE = "Закрыть"
 BTN_PRICE = "💰 Прайс"
 BTN_SCHEDULE = "🕐 Режим работы"
 
@@ -973,12 +974,12 @@ async def send_media_request(message: Message, state: FSMContext) -> None:
         return
     await state.set_state(ClientRequestFSM.waiting_media)
     cancel_keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        keyboard=[[KeyboardButton(text=BTN_CLOSE)]],
         resize_keyboard=True,
     ) if not is_admin(user_id) else None
     await message.answer(
         "Отправьте фото или видео для оценки. Можно отправить несколько.\n"
-        "Когда закончите — нажмите «Отмена».",
+        "Когда закончите — нажмите «Закрыть».",
         reply_markup=cancel_keyboard,
     )
 
@@ -988,7 +989,7 @@ async def handle_media_upload(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
     # Отмена
-    if message.text and message.text.strip().casefold() == BTN_CANCEL.lower():
+    if message.text and message.text.strip().casefold() == BTN_CLOSE.lower():
         await state.clear()
         client = await get_client_by_tg(message.from_user.id)
         user_id = message.from_user.id if message.from_user else None
@@ -1000,12 +1001,12 @@ async def handle_media_upload(message: Message, state: FSMContext) -> None:
     # Разрешаем только фото/видео/документы
     if not (message.photo or message.video or message.document):
         return await message.answer(
-            "Пожалуйста, отправьте фото или видео. Для выхода нажмите «Отмена»."
+            "Пожалуйста, отправьте фото или видео. Для выхода нажмите «Закрыть»."
         )
     client = await get_client_by_tg(message.from_user.id)
     await notify_admins_media("Фото/видео от клиента", message, client)
     await message.answer(
-        "Фото/видео передано администратору. Можно отправить еще или нажмите «Отмена»."
+        "Фото/видео передано администратору. Можно отправить еще или нажмите «Закрыть»."
     )
 
 
