@@ -36,12 +36,27 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 - Keep fixes narrow. Do not refactor `bot.py` broadly unless the task truly requires it.
 - Record environment-sensitive changes clearly because the project depends on bot tokens and admin IDs.
 
+## Git Hygiene
+
+- Run `git status --short` before editing, before committing, and before deploy.
+- Commit completed work in small logical steps.
+- Keep bot runtime fixes separate from documentation-only updates when possible.
+- Do not deploy or hand off from a dirty worktree if the current task is finished.
+
+## Deploy Rules
+
+- Deploy only from committed state.
+- Prefer commit -> push -> deploy -> log verification.
+- If the deploy path is not already established for the current environment, stop and document the missing deploy procedure instead of improvising.
+
 ## End Of Session Requirements
 
 Before ending the session:
-1. rewrite `AGENT_STATE.md` to reflect current state;
-2. append one new entry to `SESSION_LOG.md`;
-3. keep both files short, factual, and agent-readable.
+1. run `git status --short`;
+2. commit completed work in one or more small logical commits;
+3. rewrite `AGENT_STATE.md` to reflect current state;
+4. append one new entry to `SESSION_LOG.md`;
+5. keep both files short, factual, and agent-readable.
 
 ## Current Focus
 
