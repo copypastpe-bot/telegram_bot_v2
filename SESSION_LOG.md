@@ -96,3 +96,34 @@ scope: Repaired the long-polling transport so the bot can bypass a bad `api.tele
 - `/opt/telegram-bot-v2/.env`
 
 ---
+### 2026-04-13 17:05 - Added shared heartbeat reporting for admin-side outage alerts
+
+status: completed
+actor: codex
+scope: Added a narrow liveness signal so the companion admin bot can detect when the client bot stops answering or loses Telegram API reachability.
+
+#### Changes
+
+- Added shared `service_heartbeats` schema bootstrap in `bot.py`.
+- Added periodic `heartbeat_client_bot()` probes using the bot's own Telegram session and shared DB row updates.
+- Recorded startup state before polling and scheduled recurring heartbeat updates during runtime.
+- Kept the heartbeat contract aligned with `tgbot-v1`, which now reads the same table and emits admin alerts.
+
+#### Verified
+
+- Read the live `main()` bootstrap and scheduler path before inserting the heartbeat job.
+- Reviewed the patch to keep the change local to health reporting, without altering onboarding, media, order, or bonus flows.
+- Ran syntax validation via `compile(...)` on `bot.py`.
+
+#### Next Steps
+
+- Deploy this repo together with the matching `tgbot-v1` changes.
+- After deploy, verify that `service_heartbeats.service_key='telegram-bot-client'` updates at the expected interval and that the admin bot stops alerting once heartbeats arrive.
+
+#### References
+
+- `bot.py`
+- `AGENT_STATE.md`
+- `../tgbot-v1/bot.py`
+
+---

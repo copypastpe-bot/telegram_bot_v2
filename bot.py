@@ -58,6 +58,14 @@ TELEGRAM_API_IPS_RAW = (
 ).strip()
 TELEGRAM_IP_PROBE_TIMEOUT_SEC = float(os.getenv("TELEGRAM_IP_PROBE_TIMEOUT_SEC", "1.5") or "1.5")
 TELEGRAM_IP_RECHECK_SEC = float(os.getenv("TELEGRAM_IP_RECHECK_SEC", "30") or "30")
+CLIENT_BOT_HEALTH_SERVICE_KEY = (os.getenv("CLIENT_BOT_HEALTH_SERVICE_KEY") or "telegram-bot-client").strip()
+CLIENT_BOT_HEALTH_DISPLAY_NAME = (
+    os.getenv("CLIENT_BOT_HEALTH_DISPLAY_NAME") or "Клиентский Telegram бот"
+).strip()
+CLIENT_BOT_HEARTBEAT_INTERVAL_SEC = int(os.getenv("CLIENT_BOT_HEARTBEAT_INTERVAL_SEC", "60") or "60")
+CLIENT_BOT_HEALTH_PROBE_TIMEOUT_SEC = float(
+    os.getenv("CLIENT_BOT_HEALTH_PROBE_TIMEOUT_SEC", "10") or "10"
+)
 
 
 def _parse_telegram_api_ips() -> list[str]:
@@ -311,6 +319,157 @@ async def notify_admins(text: str) -> None:
         except Exception as exc:
             print(f"[NOTIFY_ADMINS] Ошибка при отправке админу {admin_id}: {exc}")
             logging.error("Не удалось уведомить админа %s: %s", admin_id, exc)
+
+
+async def ensure_service_heartbeat_schema(conn: asyncpg.Connection) -> None:
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS service_heartbeats (
+            service_key text PRIMARY KEY,
+            display_name text NOT NULL,
+            status text NOT NULL DEFAULT 'starting',
+            last_seen_at timestamptz NOT NULL DEFAULT NOW(),
+            last_ok_at timestamptz,
+            last_error text,
+            alert_open boolean NOT NULL DEFAULT FALSE,
+            last_alerted_at timestamptz,
+            last_recovered_at timestamptz,
+            created_at timestamptz NOT NULL DEFAULT NOW(),
+            updated_at timestamptz NOT NULL DEFAULT NOW(),
+            CONSTRAINT service_heartbeats_status_check
+                CHECK (status IN ('starting', 'ok', 'error'))
+        );
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS display_name text;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'starting';
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS last_seen_at timestamptz NOT NULL DEFAULT NOW();
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS last_ok_at timestamptz;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS last_error text;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS alert_open boolean NOT NULL DEFAULT FALSE;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS last_alerted_at timestamptz;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS last_recovered_at timestamptz;
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT NOW();
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE service_heartbeats
+        ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT NOW();
+        """
+    )
+    await conn.execute(
+        """
+        UPDATE service_heartbeats
+        SET display_name = COALESCE(NULLIF(display_name, ''), service_key),
+            updated_at = COALESCE(updated_at, NOW())
+        WHERE display_name IS NULL
+           OR display_name = '';
+        """
+    )
+
+
+def _health_error_text(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+async def _write_client_bot_health(*, status: str, last_error: Optional[str], mark_ok: bool) -> None:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO service_heartbeats (
+                service_key,
+                display_name,
+                status,
+                last_seen_at,
+                last_ok_at,
+                last_error,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                NOW(),
+                CASE WHEN $4 THEN NOW() ELSE NULL END,
+                $5,
+                NOW(),
+                NOW()
+            )
+            ON CONFLICT (service_key) DO UPDATE
+            SET display_name = EXCLUDED.display_name,
+                status = EXCLUDED.status,
+                last_seen_at = EXCLUDED.last_seen_at,
+                last_ok_at = CASE
+                    WHEN EXCLUDED.last_ok_at IS NOT NULL THEN EXCLUDED.last_ok_at
+                    ELSE service_heartbeats.last_ok_at
+                END,
+                last_error = EXCLUDED.last_error,
+                updated_at = NOW()
+            """,
+            CLIENT_BOT_HEALTH_SERVICE_KEY,
+            CLIENT_BOT_HEALTH_DISPLAY_NAME,
+            status,
+            mark_ok,
+            last_error,
+        )
+
+
+async def heartbeat_client_bot() -> None:
+    try:
+        await asyncio.wait_for(bot.get_me(), timeout=CLIENT_BOT_HEALTH_PROBE_TIMEOUT_SEC)
+    except Exception as exc:
+        error_text = _health_error_text(exc)
+        await _write_client_bot_health(status="error", last_error=error_text[:1000], mark_ok=False)
+        logging.warning("Client bot heartbeat failed: %s", error_text)
+        return
+
+    await _write_client_bot_health(status="ok", last_error=None, mark_ok=True)
 
 
 async def get_bonus_info(conn: asyncpg.Connection, client_id: int) -> Tuple[int, Optional[datetime]]:
@@ -1519,6 +1678,10 @@ async def main() -> None:
     ])
     
     await init_pool(min_size=1, max_size=5)
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await ensure_service_heartbeat_schema(conn)
+    await _write_client_bot_health(status="starting", last_error=None, mark_ok=False)
     
     # Настраиваем планировщик для ежедневной очистки истекших бонусов
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
@@ -1529,10 +1692,21 @@ async def main() -> None:
         name="Очистка истекших бонусов",
         replace_existing=True,
     )
+    scheduler.add_job(
+        heartbeat_client_bot,
+        trigger="interval",
+        seconds=CLIENT_BOT_HEARTBEAT_INTERVAL_SEC,
+        id="client_bot_heartbeat",
+        name="Heartbeat клиентского бота",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     logging.info("Планировщик запущен: очистка истекших бонусов ежедневно в 12:00 МСК")
     
     try:
+        await heartbeat_client_bot()
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     finally:
