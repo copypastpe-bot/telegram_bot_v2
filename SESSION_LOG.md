@@ -65,3 +65,34 @@ scope: Prepared the small client bot for safe future repair work by reconciling 
 - `telegram_bot_full_spec.md`
 
 ---
+### 2026-04-13 16:20 - Added Telegram API IP fallback to client bot
+
+status: completed
+actor: codex
+scope: Repaired the long-polling transport so the bot can bypass a bad `api.telegram.org` DNS target on the production host.
+
+#### Changes
+
+- Ported the Telegram API IP fallback resolver pattern from `tgbot-v1` into `bot.py`.
+- Switched bot creation to a custom `AiohttpSession` with resolver-based IP probing and DNS cache bypass.
+- Added env support for `TELEGRAM_PROXY_URL`, `TELEGRAM_API_IP`, `TELEGRAM_API_IPS`, `TELEGRAM_IP_PROBE_TIMEOUT_SEC`, and `TELEGRAM_IP_RECHECK_SEC`.
+- Added a default Telegram IP pool so the fix works even if `v2` production `.env` does not yet define those keys.
+
+#### Verified
+
+- Confirmed on the server that `telegram-bot-v2.service` was timing out against `api.telegram.org` while TCP to `149.154.167.220:443` was reachable.
+- Confirmed `tgbot-v1` already uses the same fallback pattern and recovers after switching IPs.
+- Ran local syntax validation for `bot.py` with `compile(...)`.
+
+#### Next Steps
+
+- Deploy the updated `bot.py` to production through git and restart `telegram-bot-v2.service`.
+- After restart, check `journalctl -u telegram-bot-v2.service` for `Telegram API IP selected` or `Connection established` and verify real updates are handled again.
+
+#### References
+
+- `bot.py`
+- `/opt/telegram-bot/bot.py`
+- `/opt/telegram-bot-v2/.env`
+
+---
