@@ -48,6 +48,9 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 - Deploy only from committed state.
 - Prefer commit -> push -> deploy -> log verification.
 - If the deploy path is not already established for the current environment, stop and document the missing deploy procedure instead of improvising.
+- Assume the path is `local -> git -> VPS` unless project docs say otherwise.
+- Do not search for passwords, invent credentials, or guess how to get onto the server.
+- If SSH works but `sudo` or another privileged step is unavailable, stop and ask the user.
 
 ## End Of Session Requirements
 
