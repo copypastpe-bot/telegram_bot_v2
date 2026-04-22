@@ -8,14 +8,25 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 
 ## Read Order
 
-1. `AGENT_STATE.md`
-2. recent entries in `SESSION_LOG.md`
+Infra map (canonical, token-light): /Users/evgenijpastusenko/Projects/agent1/docs/INFRA_MAP_LITE.yaml
+
+1. /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md
+2. recent entries in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md
 3. `bot.py`
 4. `app/db.py`
 5. `app/migrations/0003_client_bot.sql`
 6. `docs/NEW_BOT_LOGIC.md`
 7. `telegram_bot_full_spec.md`
 8. `docs/TELEGRAM_BOT_INTEGRATION.md`
+
+## Central Context
+
+This project uses central agent memory outside the current repository.
+If `./AGENT_STATE.md` or `./SESSION_LOG.md` are missing here, that is expected.
+Read and update only these registered files:
+
+- State: `/Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md`
+- Log: `/Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md`
 
 ## Key Sources
 
@@ -27,6 +38,15 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 - `docs/TELEGRAM_BOT_INTEGRATION.md`
 
 ## Working Rules
+
+- Project context state is centralized in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md.
+- Project session log is centralized in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md.
+- Central context lives in `agent1/project_ai_context/`, not in this repository.
+- Missing local `AGENT_STATE.md` / `SESSION_LOG.md` in `telegram-bot-client` is expected and not an error.
+- Do not recreate local AGENT_STATE.md and SESSION_LOG.md in this project.
+- If required facts are missing, ask the user directly.
+- Do not enumerate speculative options by default.
+- Use detective mode only when the user explicitly asks to find a solution or process.
 
 - Treat `bot.py` as the primary runtime entrypoint unless the architecture is explicitly refactored.
 - Verify database assumptions against `app/db.py` and migrations before changing stateful flows.
@@ -57,8 +77,8 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 Before ending the session:
 1. run `git status --short`;
 2. commit completed work in one or more small logical commits;
-3. rewrite `AGENT_STATE.md` to reflect current state;
-4. append one new entry to `SESSION_LOG.md`;
+3. rewrite /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md to reflect current state;
+4. append one new entry to /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md;
 5. keep both files short, factual, and agent-readable.
 
 ## Current Focus
