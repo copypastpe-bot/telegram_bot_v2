@@ -10,8 +10,8 @@ Maintain the RaketaClean client-facing Telegram bot without confusing live code 
 
 Infra map (canonical, token-light): /Users/evgenijpastusenko/Projects/agent1/docs/INFRA_MAP_LITE.yaml
 
-1. /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md
-2. recent entries in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md
+1. `./AGENT_STATE.md`
+2. recent entries in `./SESSION_LOG.md`
 3. `bot.py`
 4. `app/db.py`
 5. `app/migrations/0003_client_bot.sql`
@@ -19,14 +19,17 @@ Infra map (canonical, token-light): /Users/evgenijpastusenko/Projects/agent1/doc
 7. `telegram_bot_full_spec.md`
 8. `docs/TELEGRAM_BOT_INTEGRATION.md`
 
-## Central Context
+## Local Context
 
-This project uses central agent memory outside the current repository.
-If `./AGENT_STATE.md` or `./SESSION_LOG.md` are missing here, that is expected.
-Read and update only these registered files:
+This project uses `context_mode: local` in `/Users/evgenijpastusenko/Projects/agent1/registry.yaml`.
+Agent memory lives inside this repository, not in central storage:
 
-- State: `/Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md`
-- Log: `/Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md`
+- State: `./AGENT_STATE.md`
+- Log: `./SESSION_LOG.md`
+
+Do not create or update copies of these files under
+`/Users/evgenijpastusenko/Projects/agent1/project_ai_context/` — for this project
+the local files are the registered ones.
 
 ## Key Sources
 
@@ -39,11 +42,8 @@ Read and update only these registered files:
 
 ## Working Rules
 
-- Project context state is centralized in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md.
-- Project session log is centralized in /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md.
-- Central context lives in `agent1/project_ai_context/`, not in this repository.
-- Missing local `AGENT_STATE.md` / `SESSION_LOG.md` in `telegram-bot-client` is expected and not an error.
-- Do not recreate local AGENT_STATE.md and SESSION_LOG.md in this project.
+- Project context state lives in `./AGENT_STATE.md` inside this repository.
+- Project session log lives in `./SESSION_LOG.md` inside this repository.
 - If required facts are missing, ask the user directly.
 - Do not enumerate speculative options by default.
 - Use detective mode only when the user explicitly asks to find a solution or process.
@@ -104,8 +104,8 @@ Files longer than 500 lines and their function maps:
 Before ending the session:
 1. run `git status --short`;
 2. commit completed work in one or more small logical commits;
-3. rewrite /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/AGENT_STATE.md to reflect current state;
-4. add one new entry at the top of /Users/evgenijpastusenko/Projects/agent1/project_ai_context/telegram-bot-client/SESSION_LOG.md;
+3. rewrite `./AGENT_STATE.md` to reflect current state;
+4. add one new entry at the top of `./SESSION_LOG.md`;
 5. apply Context File Rules above to both files.
 
 ## Current Focus
