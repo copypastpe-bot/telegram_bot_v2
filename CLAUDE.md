@@ -85,19 +85,6 @@ Files longer than 500 lines and their function maps:
 - Do not search for passwords, invent credentials, or guess how to get onto the server.
 - If SSH works but `sudo` or another privileged step is unavailable, stop and ask the user.
 
-## Context File Rules
-
-### AGENT_STATE.md
-- Rewrite fully at each session close. Maximum 60 lines.
-- Allowed: project/status header, Purpose, Current State (branch + HEAD + deploy status), Pending, Known Limitations.
-- Forbidden: Verified sections with commands or outputs, deploy receipts, local machine tooling unrelated to this project.
-
-### SESSION_LOG.md
-- Add entries at the top (newest first). Keep the last 10 entries.
-- Move entries beyond 10 to `SESSION_LOG_archive.md` in the same directory (append, never delete).
-- Each entry: maximum 25 lines — date/title, status, scope, key changes (bullets), deploy SHA if applicable, notes.
-- Forbidden: command outputs, curl responses, container statuses, full test or docker output.
-
 ## End Of Session Requirements
 
 Before ending the session:
@@ -105,7 +92,7 @@ Before ending the session:
 2. commit completed work in one or more small logical commits;
 3. rewrite `./AGENT_STATE.md` to reflect current state;
 4. add one new entry at the top of `./SESSION_LOG.md`;
-5. apply Context File Rules above to both files.
+5. follow the context file rules in the global `~/.claude/CLAUDE.md`.
 
 ## Current Focus
 
