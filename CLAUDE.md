@@ -60,7 +60,6 @@ the local files are the registered ones.
 
 Common rules for python projects (Rules 4.1):
 
-- One session equals one task. A working session does not live longer than one day and 300 steps. A new task opens a new session from `AGENT_STATE.md` and the log. This also covers Opus sessions where code is written directly in the conversation.
 - At 300k tokens of memory the coordinator or the executor runs `/compact` stating what to keep, or closes the session by the closing rules.
 - Tests during work are targeted: only the affected file or a selection (`pytest tests/x.py -q --tb=short`), output through `tail`. A full run once before commit and once before deploy. TDD stays: this project has a standard `pytest`.
 - `ssh` only through the project's runbook scripts, output trimmed to the useful part. No manual step-by-step diagnosis on the server from the main session: write a script and run it once.
