@@ -56,67 +56,6 @@ Read and update only these registered files:
 - Keep fixes narrow. Do not refactor `bot.py` broadly unless the task truly requires it.
 - Record environment-sensitive changes clearly because the project depends on bot tokens and admin IDs.
 
-## Model Routing
-
-Hard rule set by the owner on 2026-09-06. Sessions open on Fable by default unless the owner picks another model.
-
-First line of every reply to a new task: the task type and how it will be run, in the owner's language.
-
-- Discussion, architecture, solution search, brainstorming, writing a spec or a plan: Fable, in the current session.
-- Writing code, executing a spec, implementation: Opus.
-- The simplest operations: Sonnet.
-- Hard bugs, non-standard situations, heavy analysis: stop and discuss the model choice with the owner before starting.
-
-Execution rules:
-
-- Small edits (a few lines, one file, no design decisions): Fable does them itself in the current session.
-- Large edits or a feature: Fable writes the spec to `docs/plans/<YYYY-MM-DD>-<name>.md` (create the folder if missing), then asks the owner how to run it: subagents from this session, or a new session on Opus with the spec. The owner decides; never pick for them.
-- Fable does not write code from a finished spec. The only exception is the owner saying "do it here".
-- Subagents run on Opus (implementation) or Sonnet (mechanical work). Never spawn a Fable subagent unless the owner explicitly asks for one: it burns the usage limit for nothing.
-- A subagent has no memory of this conversation: hand it the spec file, not a retelling.
-- The executor verifies its own result and records it in the session log. Fable reviews the diff only when the owner asks.
-
-## Session and Memory Rules
-
-Hard rule set by the owner on 2026-09-10. Full text of the rules: `~/Projects/agent1/docs/plans/2026-09-10-working-rules.md`.
-
-Memory:
-
-- Read only the parts of a file you need. Every file longer than 500 lines has a function map next to it (`<name>.map.md`): the list of functions with one line of purpose each. The agent that changed the file updates the map.
-- Trim command output to the useful part (last lines, filter by pattern) instead of printing it whole.
-- Screenshots and images are not forwarded to executors. The coordinator describes in words what is on them.
-- The coordinator stores subagent reports in a log file and keeps a summary of at most 20 lines in its own memory.
-- Above 400k tokens of memory the coordinator runs `/compact` or opens a new session from the spec and the log. The same after a break on the usage limit.
-- Do not copy the full task text into a subagent prompt: give the path to the plan and the task number.
-- One working session equals one task: no longer than one day and 300 steps, then close it by the rules and open a new one. Auto-compaction does not fire on 1M-token windows, so sessions are closed by hand.
-
-Fixes after review:
-
-- The list of review findings is filtered first (what nobody asked for is not done) and written to a file.
-- A fresh agent applies the fixes if the previous one is above 300k tokens of memory or has already done one round. Superpowers 6.3 returns the same executor for up to three rounds by default; our rule is stricter and the coordinator says so in the spec.
-- No more than two rounds per task; after that the owner decides.
-
-Review:
-
-- A spec-compliance review on every task: short, catches drift immediately.
-- A quality review not on every task but per block of 3-4 related tasks, plus one review of the whole branch at the end.
-- A review only reads and writes findings to a file. It does not fix code.
-
-Environment and stand:
-
-- Before a spec is written, a short reconnaissance task on the stand: build, start, test run, known traps. The result goes to `AGENT_STATE.md`.
-- Any external process (1C, docker, tests) starts with a hard timeout and is killed when it expires. The timeout lives in a project script, not in the agent's head.
-- Every project keeps a `.claude/settings.json` with the permissions its own scripts need (skill `fewer-permission-prompts`). The same permission denial must not repeat eight times.
-
-Models:
-
-- The split in Model Routing stands. Refinement: mechanical tasks (scripts, documents, edits from a ready list in one or two files) go to Sonnet, integration and debugging to Opus, design to Fable.
-- Review is routed by diff size: a small mechanical diff does not need Opus.
-
-Rules for `agent1`:
-
-- both `CLAUDE.md` templates and every active project's `CLAUDE.md` carry this section verbatim (in Russian where the project file is written in Russian), the same as Model Routing.
-
 ## Project Rules (2026-09-10)
 
 Common rules for python projects (Rules 4.1):
@@ -137,21 +76,6 @@ This project (Rules 4.2):
 Files longer than 500 lines and their function maps:
 
 - `bot.py` (1718 lines) -> `bot.py.map.md`
-
-## Skill Usage
-
-- Do not load or invoke Superpowers or other optional skills automatically at session start.
-- Before using any Superpowers skill, ask the user for permission and name the exact skill plus the reason.
-- For routine tasks such as checking databases, reading logs, inspecting git status, reviewing files, or running documented deploy/diagnostic commands, use project docs and direct commands first; do not read skills unless the user approves.
-- If the user explicitly asks to use a skill or plugin, use only the minimum relevant skill files and state that you are doing so.
-- If higher-priority runtime instructions force a skill lookup, keep it minimal and continue without broad skill exploration.
-
-## Git Hygiene
-
-- Run `git status --short` before editing, before committing, and before deploy.
-- Commit completed work in small logical steps.
-- Keep bot runtime fixes separate from documentation-only updates when possible.
-- Do not deploy or hand off from a dirty worktree if the current task is finished.
 
 ## Deploy Rules
 
