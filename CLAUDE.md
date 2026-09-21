@@ -45,7 +45,6 @@ the local files are the registered ones.
 - Project context state lives in `./AGENT_STATE.md` inside this repository.
 - Project session log lives in `./SESSION_LOG.md` inside this repository.
 - If required facts are missing, ask the user directly.
-- Do not enumerate speculative options by default.
 - Use detective mode only when the user explicitly asks to find a solution or process.
 
 - Treat `bot.py` as the primary runtime entrypoint unless the architecture is explicitly refactored.

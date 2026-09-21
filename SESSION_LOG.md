@@ -1,5 +1,13 @@
 # SESSION_LOG
 
+### 2026-09-21 - CLAUDE.md: убрана строка «Do not enumerate speculative options by default»
+
+status: completed
+actor: claude (из сессии проекта raketaclean, по разрешению владельца)
+scope: только `CLAUDE.md`, код не тронут.
+
+- Строка противоречила новому глобальному правилу (проектирование обязательно, варианты на выбор владельца нумерованным списком). Решение владельца 2026-09-21, свод `agent1/docs/working-rules.md` 2.14.
+
 ### 2026-04-13 17:05 - Added shared heartbeat reporting for admin-side outage alerts
 
 status: completed
