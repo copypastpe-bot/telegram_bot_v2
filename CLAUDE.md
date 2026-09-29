@@ -1,5 +1,7 @@
 # CLAUDE
 
+Общие правила живут в глобальном `~/.claude/CLAUDE.md` и грузятся программой сами. Здесь только то, что касается этого проекта.
+
 Read this before working in the project.
 
 ## Goal
@@ -19,18 +21,6 @@ Infra map (canonical, token-light): /Users/evgenijpastusenko/Projects/agent1/doc
 7. `telegram_bot_full_spec.md`
 8. `docs/TELEGRAM_BOT_INTEGRATION.md`
 
-## Local Context
-
-This project uses `context_mode: local` in `/Users/evgenijpastusenko/Projects/agent1/registry.yaml`.
-Agent memory lives inside this repository, not in central storage:
-
-- State: `./AGENT_STATE.md`
-- Log: `./SESSION_LOG.md`
-
-Do not create or update copies of these files under
-`/Users/evgenijpastusenko/Projects/agent1/project_ai_context/` — for this project
-the local files are the registered ones.
-
 ## Key Sources
 
 - `bot.py`
@@ -40,12 +30,9 @@ the local files are the registered ones.
 - `telegram_bot_full_spec.md`
 - `docs/TELEGRAM_BOT_INTEGRATION.md`
 
-## Working Rules
+- `bot.py.map.md` — function map for `bot.py` (1718 lines); read the map first, then the needed part.
 
-- Project context state lives in `./AGENT_STATE.md` inside this repository.
-- Project session log lives in `./SESSION_LOG.md` inside this repository.
-- If required facts are missing, ask the user directly.
-- Use detective mode only when the user explicitly asks to find a solution or process.
+## Working Rules
 
 - Treat `bot.py` as the primary runtime entrypoint unless the architecture is explicitly refactored.
 - Verify database assumptions against `app/db.py` and migrations before changing stateful flows.
@@ -55,44 +42,6 @@ the local files are the registered ones.
 - Keep fixes narrow. Do not refactor `bot.py` broadly unless the task truly requires it.
 - Record environment-sensitive changes clearly because the project depends on bot tokens and admin IDs.
 
-## Project Rules (2026-09-10)
-
-Common rules for python projects (Rules 4.1):
-
-- At 300k tokens of memory the coordinator or the executor runs `/compact` stating what to keep, or closes the session by the closing rules.
-- Tests during work are targeted: only the affected file or a selection (`pytest tests/x.py -q --tb=short`), output through `tail`. A full run once before commit and once before deploy. TDD stays: this project has a standard `pytest`.
-- `ssh` only through the project's runbook scripts, output trimmed to the useful part. No manual step-by-step diagnosis on the server from the main session: write a script and run it once.
-- Files longer than 500 lines are read in parts; the function map lives next to the file (owner decision 2026-09-10).
-- `.claude/settings.json` of this project holds the permissions its own work needs: `pytest`, `git status/diff/log`, file reads (`cat`, `sed -n`, `grep`, `rg`), `python -m`, project scripts. `ssh`, `scp`, `rsync` stay a question for the owner.
-- Subagent worktrees are removed after merge (`git worktree prune` plus branch deletion). No leftovers between sessions.
-- Images and screenshots do not go into working-session memory, unless the task is about the interface and the owner chose to show the screen.
-
-This project (Rules 4.2):
-
-- Only two items: a `.claude/settings.json` for the project, and the function map for the big file.
-
-Files longer than 500 lines and their function maps:
-
-- `bot.py` (1718 lines) -> `bot.py.map.md`
-
 ## Deploy Rules
 
-- Deploy only from committed state.
-- Prefer commit -> push -> deploy -> log verification.
-- If the deploy path is not already established for the current environment, stop and document the missing deploy procedure instead of improvising.
-- Assume the path is `local -> git -> VPS` unless project docs say otherwise.
-- Do not search for passwords, invent credentials, or guess how to get onto the server.
-- If SSH works but `sudo` or another privileged step is unavailable, stop and ask the user.
-
-## End Of Session Requirements
-
-Before ending the session:
-1. run `git status --short`;
-2. commit completed work in one or more small logical commits;
-3. rewrite `./AGENT_STATE.md` to reflect current state;
-4. add one new entry at the top of `./SESSION_LOG.md`;
-5. follow the context file rules in the global `~/.claude/CLAUDE.md`.
-
-## Current Focus
-
-Prepare the project for the next repair session by anchoring work to the live runtime flow: phone capture, signup bonus, questions/orders/media forwarding, and admin notifications.
+- After each deploy, verify the bot's logs.
